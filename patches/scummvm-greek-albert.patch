@@ -526,6 +526,42 @@ index 19c96fde..65a11a82 100644
  	kDos850,
  	kDos862,
  	kDos866,
+diff --git a/engines/mtropolis/assets.cpp b/engines/mtropolis/assets.cpp
+index 45f82294..a735ecf3 100644
+--- a/engines/mtropolis/assets.cpp
++++ b/engines/mtropolis/assets.cpp
+@@ -921,8 +921,10 @@ ImageAsset::~ImageAsset() {
+ 
+ bool ImageAsset::load(AssetLoaderContext &context, const Data::ImageAsset &data) {
+ 	_assetID = data.assetID;
+-	if (!data.rect1.toScummVMRect(_rect))
++	if (!data.rect1.toScummVMRect(_rect)) {
++		warning("ImageAsset::load failed for assetID=%u: invalid rect1 (%d,%d,%d,%d)", data.assetID, data.rect1.left, data.rect1.top, data.rect1.right, data.rect1.bottom);
+ 		return false;
++	}
+ 	_filePosition = data.filePosition;
+ 	_size = data.size;
+ 	_streamIndex = context.streamIndex;
+@@ -947,6 +949,7 @@ bool ImageAsset::load(AssetLoaderContext &context, const Data::ImageAsset &data)
+ 		_colorDepth = kColorDepthMode32Bit;
+ 		break;
+ 	default:
++		warning("ImageAsset::load failed for assetID=%u: invalid bitsPerPixel=%u", data.assetID, data.bitsPerPixel);
+ 		return false;
+ 	}
+ 
+@@ -954,8 +957,10 @@ bool ImageAsset::load(AssetLoaderContext &context, const Data::ImageAsset &data)
+ 		_imageFormat = kImageFormatMac;
+ 	else if (data.haveWinPart)
+ 		_imageFormat = kImageFormatWindows;
+-	else
++	else {
++		warning("ImageAsset::load failed for assetID=%u: neither haveMacPart nor haveWinPart (size=%u, bpp=%u, rect=%d,%d,%d,%d)", data.assetID, data.size, data.bitsPerPixel, data.rect1.left, data.rect1.top, data.rect1.right, data.rect1.bottom);
+ 		return false;
++	}
+ 
+ 	return true;
+ }
 diff --git a/engines/mtropolis/boot.cpp b/engines/mtropolis/boot.cpp
 index 63bd67bd..478d69c2 100644
 --- a/engines/mtropolis/boot.cpp
@@ -1911,10 +1947,37 @@ index e986718a..e7fa44cc 100644
  		_failed = true;
  		return kMiniscriptInstructionOutcomeContinue;
 diff --git a/engines/mtropolis/miniscript.h b/engines/mtropolis/miniscript.h
-index 4b40e6f6..8856e2f2 100644
+index 4b40e6f6..fc753a13 100644
 --- a/engines/mtropolis/miniscript.h
 +++ b/engines/mtropolis/miniscript.h
-@@ -301,7 +301,9 @@ namespace MiniscriptInstructions {
+@@ -72,6 +72,9 @@ public:
+ 	Common::WeakPtr<RuntimeObject> getRefByIndex(uint index) const;
+ 	Common::WeakPtr<RuntimeObject> getGlobalRefByIndex(uint index) const;
+ 
++	const Common::Array<LocalRef> &getLocalRefs() const { return _localRefs; }
++	const Common::Array<GlobalRef> &getGlobalRefs() const { return _globalRefs; }
++
+ private:
+ 	Common::Array<LocalRef> _localRefs;
+ 	Common::Array<GlobalRef> _globalRefs;
+@@ -246,7 +249,7 @@ namespace MiniscriptInstructions {
+ 		bool compareFloat(double a, double b) const override { return a > b; }
+ 	};
+ 
+-	class BuiltinFunc : public UnimplementedInstruction {
++	class BuiltinFunc : public MiniscriptInstruction {
+ 	public:
+ 		enum BuiltinFunctionID {
+ 			kSin = 1,
+@@ -272,6 +275,7 @@ namespace MiniscriptInstructions {
+ 		};
+ 
+ 		explicit BuiltinFunc(BuiltinFunctionID bfid);
++		BuiltinFunctionID getFuncID() const { return _funcID; }
+ 
+ 	private:
+ 		MiniscriptInstructionOutcome execute(MiniscriptThread *thread) const override;
+@@ -301,13 +305,19 @@ namespace MiniscriptInstructions {
  		MiniscriptInstructionOutcome execute(MiniscriptThread *thread) const override;
  	};
  
@@ -1925,8 +1988,59 @@ index 4b40e6f6..8856e2f2 100644
  	};
  
  	class GetChild : public MiniscriptInstruction {
+ 	public:
+ 		GetChild(uint32 attribute, bool isLValue, bool isIndexed);
+ 
++		uint32 getAttributeIndex() const { return _attribute; }
++		bool isLValue() const { return _isLValue; }
++		bool isIndexed() const { return _isIndexed; }
++
+ 	private:
+ 		MiniscriptInstructionOutcome execute(MiniscriptThread *thread) const override;
+ 		MiniscriptInstructionOutcome readRValueAttrib(MiniscriptThread *thread, DynamicValue &valueSrcDest, const Common::String &attrib) const;
+@@ -347,6 +357,9 @@ namespace MiniscriptInstructions {
+ 		PushValue(DataType dataType, const void *value, bool isLValue);
+ 		~PushValue();
+ 
++		DataType getDataType() const { return _dataType; }
++		uint32 getRefIndex() const { return _value.ref; }
++
+ 	private:
+ 		MiniscriptInstructionOutcome execute(MiniscriptThread *thread) const override;
+ 
+@@ -370,7 +383,9 @@ namespace MiniscriptInstructions {
+ 
+ 		MiniscriptInstructionOutcome execute(MiniscriptThread *thread) const override;
+ 
+-	private:
++		uint32 getGlobalID() const { return _globalID; }
++		bool isLValue() const { return _isLValue; }
++
+ 		enum {
+ 			kGlobalRefElement = 1,
+ 			kGlobalRefModifier = 2,
+@@ -385,15 +400,18 @@ namespace MiniscriptInstructions {
+ 			kGlobalRefActiveScene = 11,
+ 		};
+ 
++	private:
++
+ 		MiniscriptInstructionOutcome executeFindFilteredParent(MiniscriptThread *thread, DynamicValue &result) const;
+ 
+ 		uint32 _globalID;
+ 		bool _isLValue;
+ 	};
+ 
+-	class PushString : public UnimplementedInstruction {
++	class PushString : public MiniscriptInstruction {
+ 	public:
+ 		explicit PushString(const Common::String &str);
++		const Common::String &getString() const { return _str; }
+ 
+ 	private:
+ 		MiniscriptInstructionOutcome execute(MiniscriptThread *thread) const override;
 diff --git a/engines/mtropolis/modifiers.cpp b/engines/mtropolis/modifiers.cpp
-index 70051fcf..f151c590 100644
+index 70051fcf..845a887a 100644
 --- a/engines/mtropolis/modifiers.cpp
 +++ b/engines/mtropolis/modifiers.cpp
 @@ -235,6 +235,57 @@ void BehaviorModifier::visitInternalReferences(IStructuralReferenceVisitor* visi
@@ -2000,7 +2114,21 @@ index 70051fcf..f151c590 100644
  
  		if (succeeded) {
  			for (const Common::SharedPtr<SaveLoadHooks> &hooks : runtime->getHacks().saveLoadHooks)
-@@ -794,18 +848,22 @@ bool SoundEffectModifier::respondsToEvent(const Event &evt) const {
+@@ -505,6 +559,13 @@ VThreadState MessengerModifier::consumeMessage(Runtime *runtime, const Common::S
+ 
+ void MessengerModifier::linkInternalReferences(ObjectLinkingScope *outerScope) {
+ 	_sendSpec.linkInternalReferences(outerScope);
++	if (_sendSpec._linkType == MessengerSendSpec::kLinkTypeUnresolved && _name == "fin_sauve_plat") {
++		Common::SharedPtr<RuntimeObject> resolution = outerScope->resolve("bords_page", true).lock();
++		if (resolution && resolution->isStructural()) {
++			_sendSpec._resolvedStructuralDest = resolution.staticCast<Structural>();
++			_sendSpec._linkType = MessengerSendSpec::kLinkTypeStructural;
++		}
++	}
+ }
+ 
+ void MessengerModifier::visitInternalReferences(IStructuralReferenceVisitor *visitor) {
+@@ -794,18 +855,22 @@ bool SoundEffectModifier::respondsToEvent(const Event &evt) const {
  
  VThreadState SoundEffectModifier::consumeMessage(Runtime *runtime, const Common::SharedPtr<MessageProperties> &msg) {
  	if (_terminateWhen.respondsTo(msg->getEvent())) {
@@ -2028,7 +2156,7 @@ index 70051fcf..f151c590 100644
  	if (_soundType == kSoundTypeAudioAsset) {
  		if (!_cachedAudio)
  			loadAndCacheAudio(runtime);
-@@ -829,6 +887,11 @@ void SoundEffectModifier::loadAndCacheAudio(Runtime *runtime) {
+@@ -829,6 +894,11 @@ void SoundEffectModifier::loadAndCacheAudio(Runtime *runtime) {
  	Project *project = runtime->getProject();
  	Common::SharedPtr<Asset> asset = project->getAssetByID(_assetID).lock();
  
@@ -2040,7 +2168,7 @@ index 70051fcf..f151c590 100644
  	if (!asset) {
  		warning("Sound effect modifier references asset %i but the asset isn't loaded!", _assetID);
  		return;
-@@ -1548,18 +1611,7 @@ VThreadState SceneTransitionModifier::consumeMessage(Runtime *runtime, const Com
+@@ -1548,18 +1618,7 @@ VThreadState SceneTransitionModifier::consumeMessage(Runtime *runtime, const Com
  	if (_enableWhen.respondsTo(msg->getEvent())) {
  		SceneTransitionEffect effect;
  
@@ -2060,7 +2188,7 @@ index 70051fcf..f151c590 100644
  
  		effect._duration = _duration / timeDivisor;
  		effect._steps = _steps;
-@@ -1877,6 +1929,10 @@ CORO_BEGIN_DEFINITION(IfMessengerModifier::RunEvaluateAndSendCoroutine)
+@@ -1877,6 +1936,10 @@ CORO_BEGIN_DEFINITION(IfMessengerModifier::RunEvaluateAndSendCoroutine)
  			CORO_ERROR;
  		CORO_END_IF
  
@@ -2071,7 +2199,7 @@ index 70051fcf..f151c590 100644
  		CORO_IF(locals->isTrue)
  			CORO_AWAIT(params->self->_sendSpec.sendFromMessenger(params->runtime, params->self, locals->triggerSource.lock().get(), locals->incomingData, nullptr));
  		CORO_END_IF
-@@ -2393,6 +2449,7 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
+@@ -2393,6 +2456,7 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
  		break;
  	case Common::KEYCODE_KP_ENTER:
  		resolvedType = kEnter;
@@ -2079,7 +2207,7 @@ index 70051fcf..f151c590 100644
  		break;
  	case Common::KEYCODE_END:
  		resolvedType = kEnd;
-@@ -2407,9 +2464,11 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
+@@ -2407,9 +2471,11 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
  		break;
  	case Common::KEYCODE_BACKSPACE:
  		resolvedType = kBackspace;
@@ -2091,7 +2219,7 @@ index 70051fcf..f151c590 100644
  		break;
  	case Common::KEYCODE_PAGEUP:
  		resolvedType = kPageUp;
-@@ -2419,24 +2478,31 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
+@@ -2419,24 +2485,31 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
  		break;
  	case Common::KEYCODE_RETURN:
  		resolvedType = kReturn;
@@ -2123,7 +2251,7 @@ index 70051fcf..f151c590 100644
  		break;
  	default:
  		if (keyEvt.ascii != 0) {
-@@ -2445,6 +2511,15 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
+@@ -2445,6 +2518,15 @@ bool KeyboardMessengerModifier::checkKeyEventTrigger(Runtime *runtime, Common::E
  			Common::U32String u(uchar);
  			outCharStr = u.encode(Common::kMacRoman);
  
@@ -2139,7 +2267,7 @@ index 70051fcf..f151c590 100644
  			// STUPID HACK PLEASE FIX ME: ScummVM has no way of just telling us that the character mapping failed,
  			// so we have to check if it encoded "?"
  			if (outCharStr.size() < 1 || (outCharStr[0] == '?' && !isQuestion))
-@@ -2826,6 +2901,10 @@ IModifierContainer *CompoundVariableModifier::getChildContainer() {
+@@ -2826,6 +2908,10 @@ IModifierContainer *CompoundVariableModifier::getChildContainer() {
  	return this;
  }
  
@@ -2150,7 +2278,61 @@ index 70051fcf..f151c590 100644
  const Common::Array<Common::SharedPtr<Modifier> > &CompoundVariableModifier::getModifiers() const {
  	return _children;
  }
-@@ -3608,6 +3687,26 @@ bool StringVariableModifier::load(ModifierLoaderContext &context, const Data::St
+@@ -3215,7 +3301,7 @@ bool IntegerRangeVariableModifier::readAttribute(MiniscriptThread *thread, Dynam
+ 		result.setInt(storage->_range.max);
+ 		return true;
+ 	}
+-	return Modifier::readAttribute(thread, result, attrib);
++	return VariableModifier::readAttribute(thread, result, attrib);
+ }
+ 
+ MiniscriptInstructionOutcome IntegerRangeVariableModifier::writeRefAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &result, const Common::String &attrib) {
+@@ -3229,7 +3315,7 @@ MiniscriptInstructionOutcome IntegerRangeVariableModifier::writeRefAttribute(Min
+ 		DynamicValueWriteIntegerHelper<int32>::create(&storage->_range.max, result);
+ 		return kMiniscriptInstructionOutcomeContinue;
+ 	}
+-	return Modifier::writeRefAttribute(thread, result, attrib);
++	return VariableModifier::writeRefAttribute(thread, result, attrib);
+ }
+ 
+ #ifdef MTROPOLIS_DEBUG_ENABLE
+@@ -3342,7 +3428,7 @@ MiniscriptInstructionOutcome VectorVariableModifier::writeRefAttribute(Miniscrip
+ 		return kMiniscriptInstructionOutcomeContinue;
+ 	}
+ 
+-	return writeRefAttribute(thread, result, attrib);
++	return VariableModifier::writeRefAttribute(thread, result, attrib);
+ }
+ 
+ #ifdef MTROPOLIS_DEBUG_ENABLE
+@@ -3433,7 +3519,7 @@ void PointVariableModifier::varGetValue(DynamicValue &dest) const {
+ bool PointVariableModifier::readAttribute(MiniscriptThread *thread, DynamicValue &result, const Common::String &attrib) {
+ 	PointVariableStorage *storage = static_cast<PointVariableStorage *>(_storage.get());
+ 
+-	if (attrib == "x") {
++	if (attrib == "x" || attrib.empty()) {
+ 		result.setInt(storage->_value.x);
+ 		return true;
+ 	}
+@@ -3448,7 +3534,7 @@ bool PointVariableModifier::readAttribute(MiniscriptThread *thread, DynamicValue
+ MiniscriptInstructionOutcome PointVariableModifier::writeRefAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib) {
+ 	PointVariableStorage *storage = static_cast<PointVariableStorage *>(_storage.get());
+ 
+-	if (attrib == "x") {
++	if (attrib == "x" || attrib.empty()) {
+ 		DynamicValueWriteIntegerHelper<int16>::create(&storage->_value.x, writeProxy);
+ 		return kMiniscriptInstructionOutcomeContinue;
+ 	}
+@@ -3457,7 +3543,7 @@ MiniscriptInstructionOutcome PointVariableModifier::writeRefAttribute(Miniscript
+ 		return kMiniscriptInstructionOutcomeContinue;
+ 	}
+ 
+-	return writeRefAttribute(thread, writeProxy, attrib);
++	return VariableModifier::writeRefAttribute(thread, writeProxy, attrib);
+ }
+ 
+ #ifdef MTROPOLIS_DEBUG_ENABLE
+@@ -3608,6 +3694,26 @@ bool StringVariableModifier::load(ModifierLoaderContext &context, const Data::St
  	return true;
  }
  
@@ -2178,7 +2360,7 @@ index 70051fcf..f151c590 100644
  	DynamicValue stringValue;
  	if (!value.convertToType(DynamicValueTypes::kString, stringValue))
 diff --git a/engines/mtropolis/modifiers.h b/engines/mtropolis/modifiers.h
-index f7527d50..42e3cfeb 100644
+index f7527d50..209eb3de 100644
 --- a/engines/mtropolis/modifiers.h
 +++ b/engines/mtropolis/modifiers.h
 @@ -57,6 +57,11 @@ public:
@@ -2202,7 +2384,36 @@ index f7527d50..42e3cfeb 100644
  	Common::Array<Common::SharedPtr<Modifier> > _children;
  
  	Event _enableWhen;
-@@ -345,6 +352,7 @@ private:
+@@ -112,6 +119,9 @@ public:
+ 
+ 	void disable(Runtime *runtime) override {}
+ 
++	const Common::SharedPtr<MiniscriptProgram> &getProgram() const { return _program; }
++	const Common::SharedPtr<MiniscriptReferences> &getReferences() const { return _references; }
++
+ #ifdef MTROPOLIS_DEBUG_ENABLE
+ 	const char *debugGetTypeName() const override { return "Miniscript Modifier"; }
+ 	SupportStatus debugGetSupportStatus() const override { return kSupportStatusDone; }
+@@ -224,6 +234,8 @@ public:
+ 	void linkInternalReferences(ObjectLinkingScope *outerScope) override;
+ 	void visitInternalReferences(IStructuralReferenceVisitor *visitor) override;
+ 
++	const MessengerSendSpec &getSendSpec() const { return _sendSpec; }
++
+ #ifdef MTROPOLIS_DEBUG_ENABLE
+ 	const char *debugGetTypeName() const override { return "Messenger Modifier"; }
+ 	SupportStatus debugGetSupportStatus() const override { return kSupportStatusDone; }
+@@ -249,6 +261,9 @@ public:
+ 	void linkInternalReferences(ObjectLinkingScope *outerScope) override;
+ 	void visitInternalReferences(IStructuralReferenceVisitor *visitor) override;
+ 
++	const DynamicValueSource &getSource() const { return _source; }
++	const DynamicValueSource &getTarget() const { return _target; }
++
+ #ifdef MTROPOLIS_DEBUG_ENABLE
+ 	const char *debugGetTypeName() const override { return "Set Modifier"; }
+ 	SupportStatus debugGetSupportStatus() const override { return kSupportStatusDone; }
+@@ -345,6 +360,7 @@ private:
  	};
  
  	void loadAndCacheAudio(Runtime *runtime);
@@ -2210,7 +2421,7 @@ index f7527d50..42e3cfeb 100644
  
  	Event _executeWhen;
  	Event _terminateWhen;
-@@ -355,6 +363,7 @@ private:
+@@ -355,6 +371,7 @@ private:
  	Common::SharedPtr<CachedAudio> _cachedAudio;
  	Common::SharedPtr<AudioMetadata> _metadata;
  	Common::SharedPtr<AudioPlayer> _player;
@@ -2218,7 +2429,18 @@ index f7527d50..42e3cfeb 100644
  };
  
  class PathMotionModifier : public Modifier {
-@@ -1112,6 +1121,7 @@ public:
+@@ -701,6 +718,10 @@ public:
+ 	VThreadState consumeMessage(Runtime *runtime, const Common::SharedPtr<MessageProperties> &msg) override;
+ 	void disable(Runtime *runtime) override {}
+ 
++	const Common::SharedPtr<MiniscriptProgram> &getProgram() const { return _program; }
++	const Common::SharedPtr<MiniscriptReferences> &getReferences() const { return _references; }
++	const MessengerSendSpec &getSendSpec() const { return _sendSpec; }
++
+ #ifdef MTROPOLIS_DEBUG_ENABLE
+ 	const char *debugGetTypeName() const override { return "If Messenger Modifier"; }
+ 	SupportStatus debugGetSupportStatus() const override { return kSupportStatusDone; }
+@@ -1112,6 +1133,7 @@ public:
  	Common::SharedPtr<ModifierSaveLoad> getSaveLoad(Runtime *runtime) override;
  
  	IModifierContainer *getChildContainer() override;
@@ -2226,7 +2448,7 @@ index f7527d50..42e3cfeb 100644
  
  	bool isCompoundVariable() const override { return true; }
  
-@@ -1456,6 +1466,9 @@ public:
+@@ -1456,6 +1478,9 @@ public:
  
  	bool load(ModifierLoaderContext &context, const Data::StringVariableModifier &data);
  
@@ -2236,7 +2458,7 @@ index f7527d50..42e3cfeb 100644
  	bool varSetValue(MiniscriptThread *thread, const DynamicValue &value) override;
  	void varGetValue(DynamicValue &dest) const override;
  
-@@ -1505,6 +1518,7 @@ public:
+@@ -1505,6 +1530,7 @@ public:
  
  	bool varSetValue(MiniscriptThread *thread, const DynamicValue &value) override;
  	void varGetValue(DynamicValue &dest) const override;
@@ -3139,7 +3361,7 @@ index a27a11db..98a186ab 100644
  
  class PainterModifier : public Modifier {
 diff --git a/engines/mtropolis/plugin/standard.cpp b/engines/mtropolis/plugin/standard.cpp
-index 98537298..0671d601 100644
+index 98537298..f712cad1 100644
 --- a/engines/mtropolis/plugin/standard.cpp
 +++ b/engines/mtropolis/plugin/standard.cpp
 @@ -508,6 +508,28 @@ bool ObjectReferenceVariableModifier::load(const PlugInModifierLoaderContext &co
@@ -3171,7 +3393,41 @@ index 98537298..0671d601 100644
  // Object reference variables are somewhat unusual in that they don't store a simple value,
  // they instead have "object" and "path" attributes AND as a value, they resolve to the
  // modifier itself.
-@@ -550,6 +572,9 @@ MiniscriptInstructionOutcome ObjectReferenceVariableModifier::writeRefAttribute(
+@@ -529,7 +551,15 @@ bool ObjectReferenceVariableModifier::readAttribute(MiniscriptThread *thread, Dy
+ 		return true;
+ 	}
+ 
+-	return VariableModifier::readAttribute(thread, result, attrib);
++	if (VariableModifier::readAttribute(thread, result, attrib))
++		return true;
++
++	if (storage->_object.object.expired())
++		resolve(thread->getRuntime());
++	if (!storage->_object.object.expired())
++		return storage->_object.object.lock()->readAttribute(thread, result, attrib);
++
++	return false;
+ }
+ 
+ MiniscriptInstructionOutcome ObjectReferenceVariableModifier::writeRefAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &result, const Common::String &attrib) {
+@@ -544,12 +574,25 @@ MiniscriptInstructionOutcome ObjectReferenceVariableModifier::writeRefAttribute(
+ 		return kMiniscriptInstructionOutcomeContinue;
+ 	}
+ 
+-	return VariableModifier::writeRefAttribute(thread, result, attrib);
++	MiniscriptInstructionOutcome out = VariableModifier::writeRefAttribute(thread, result, attrib);
++	if (out != kMiniscriptInstructionOutcomeFailed)
++		return out;
++
++	ObjectReferenceVariableStorage *storage = static_cast<ObjectReferenceVariableStorage *>(_storage.get());
++	if (storage->_object.object.expired())
++		resolve(thread->getRuntime());
++	if (!storage->_object.object.expired())
++		return storage->_object.object.lock()->writeRefAttribute(thread, result, attrib);
++
++	return kMiniscriptInstructionOutcomeFailed;
+ }
+ 
  bool ObjectReferenceVariableModifier::varSetValue(MiniscriptThread *thread, const DynamicValue &value) {
  	switch (value.getType()) {
  	case DynamicValueTypes::kNull:
@@ -3181,7 +3437,7 @@ index 98537298..0671d601 100644
  	case DynamicValueTypes::kObject:
  		return scriptSetObject(thread, value) == kMiniscriptInstructionOutcomeContinue;
  	case DynamicValueTypes::kString:
-@@ -583,12 +608,13 @@ const char *ObjectReferenceVariableModifier::getDefaultName() const {
+@@ -583,12 +626,13 @@ const char *ObjectReferenceVariableModifier::getDefaultName() const {
  }
  
  MiniscriptInstructionOutcome ObjectReferenceVariableModifier::scriptSetPath(MiniscriptThread *thread, const DynamicValue &value) {
@@ -3197,7 +3453,7 @@ index 98537298..0671d601 100644
  	storage->_object.reset();
  
  	return kMiniscriptInstructionOutcomeContinue;
-@@ -603,11 +629,25 @@ MiniscriptInstructionOutcome ObjectReferenceVariableModifier::scriptSetObject(Mi
+@@ -603,11 +647,25 @@ MiniscriptInstructionOutcome ObjectReferenceVariableModifier::scriptSetObject(Mi
  		storage->_fullPath.clear();
  
  		return kMiniscriptInstructionOutcomeContinue;
@@ -3223,7 +3479,7 @@ index 98537298..0671d601 100644
  		if (!computeObjectPath(obj.get(), storage->_fullPath))
  			return scriptSetObject(thread, DynamicValue());
  
-@@ -925,7 +965,7 @@ bool ListVariableModifier::load(const PlugInModifierLoaderContext &context, cons
+@@ -925,7 +983,7 @@ bool ListVariableModifier::load(const PlugInModifierLoaderContext &context, cons
  		storage->_preferredContentType = DynamicValueTypes::kObject;
  		if (data.persistentValuesGarbled) {
  			// Ignore and let the game fix it
@@ -3232,7 +3488,7 @@ index 98537298..0671d601 100644
  			warning("Loading object reference lists from data is not implemented");
  		}
  		loadData = false;
-@@ -1114,11 +1154,16 @@ MiniscriptInstructionOutcome ListVariableModifier::writeRefAttribute(MiniscriptT
+@@ -1114,11 +1172,16 @@ MiniscriptInstructionOutcome ListVariableModifier::writeRefAttribute(MiniscriptT
  MiniscriptInstructionOutcome ListVariableModifier::writeRefAttributeIndexed(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib, const DynamicValue &index) {
  	ListVariableStorage *storage = static_cast<ListVariableStorage *>(_storage.get());
  
@@ -3281,7 +3537,7 @@ index 1bb6897b..08a7f83d 100644
  
  		if (havePersistentData) {
 diff --git a/engines/mtropolis/plugin/thereware.cpp b/engines/mtropolis/plugin/thereware.cpp
-index 4a186f02..6829f602 100644
+index 4a186f02..8c133f9c 100644
 --- a/engines/mtropolis/plugin/thereware.cpp
 +++ b/engines/mtropolis/plugin/thereware.cpp
 @@ -19,6 +19,7 @@
@@ -3292,7 +3548,7 @@ index 4a186f02..6829f602 100644
  #include "mtropolis/plugin/thereware.h"
  #include "mtropolis/plugins.h"
  
-@@ -26,25 +27,379 @@ namespace MTropolis {
+@@ -26,25 +27,407 @@ namespace MTropolis {
  
  namespace Thereware {
  
@@ -3328,6 +3584,10 @@ index 4a186f02..6829f602 100644
 +		_sendMessages = data.unknown9Bool.value.asBoolean != 0;
 +	if (data.unknown10Int.type == Data::PlugInTypeTaggedValue::kInteger)
 +		_messageInterval = data.unknown10Int.value.asInt;
++	if (_sendMessages) {
++		warning("RotatorModifier ('%s' guid=%x) has _sendMessages=true (interval=%d, u11type=%x, u14type=%x)",
++			_name.c_str(), _guid, _messageInterval, (uint)data.unknown11Event.type, (uint)data.unknown14Int.type);
++	}
 +	if (data.unknown15Point.type == Data::PlugInTypeTaggedValue::kPoint)
 +		data.unknown15Point.value.asPoint.toScummVMPoint(_size);
 +	if (data.unknown16Point.type == Data::PlugInTypeTaggedValue::kPoint)
@@ -3524,7 +3784,7 @@ index 4a186f02..6829f602 100644
 +		return kMiniscriptInstructionOutcomeContinue;
 +	}
 +	if (attrib == "size") {
-+		DynamicValueWriteFuncHelper<RotatorModifier, &RotatorModifier::scriptSetSize, true>::create(this, result);
++		DynamicValueWriteOrRefAttribFuncHelper<RotatorModifier, &RotatorModifier::scriptSetSize, &RotatorModifier::scriptWriteRefSizeAttribute>::create(this, result);
 +		return kMiniscriptInstructionOutcomeContinue;
 +	}
 +	if (attrib == "size.x" || attrib == "width") {
@@ -3536,7 +3796,7 @@ index 4a186f02..6829f602 100644
 +		return kMiniscriptInstructionOutcomeContinue;
 +	}
 +	if (attrib == "axisoffset") {
-+		DynamicValueWriteFuncHelper<RotatorModifier, &RotatorModifier::scriptSetAxisOffset, true>::create(this, result);
++		DynamicValueWriteOrRefAttribFuncHelper<RotatorModifier, &RotatorModifier::scriptSetAxisOffset, &RotatorModifier::scriptWriteRefAxisOffsetAttribute>::create(this, result);
 +		return kMiniscriptInstructionOutcomeContinue;
 +	}
 +	if (attrib == "axisoffset.x") {
@@ -3617,6 +3877,18 @@ index 4a186f02..6829f602 100644
 +	return kMiniscriptInstructionOutcomeContinue;
 +}
 +
++MiniscriptInstructionOutcome RotatorModifier::scriptWriteRefSizeAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib) {
++	if (attrib == "x") {
++		DynamicValueWriteFuncHelper<RotatorModifier, &RotatorModifier::scriptSetSizeX, true>::create(this, writeProxy);
++		return kMiniscriptInstructionOutcomeContinue;
++	}
++	if (attrib == "y") {
++		DynamicValueWriteFuncHelper<RotatorModifier, &RotatorModifier::scriptSetSizeY, true>::create(this, writeProxy);
++		return kMiniscriptInstructionOutcomeContinue;
++	}
++	return kMiniscriptInstructionOutcomeFailed;
++}
++
 +MiniscriptInstructionOutcome RotatorModifier::scriptSetAxisOffset(MiniscriptThread *thread, const DynamicValue &value) {
 +	if (value.getType() == DynamicValueTypes::kPoint) {
 +		_axisOffset = value.getPoint();
@@ -3651,6 +3923,18 @@ index 4a186f02..6829f602 100644
 +	return kMiniscriptInstructionOutcomeContinue;
 +}
 +
++MiniscriptInstructionOutcome RotatorModifier::scriptWriteRefAxisOffsetAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib) {
++	if (attrib == "x") {
++		DynamicValueWriteFuncHelper<RotatorModifier, &RotatorModifier::scriptSetAxisOffsetX, true>::create(this, writeProxy);
++		return kMiniscriptInstructionOutcomeContinue;
++	}
++	if (attrib == "y") {
++		DynamicValueWriteFuncHelper<RotatorModifier, &RotatorModifier::scriptSetAxisOffsetY, true>::create(this, writeProxy);
++		return kMiniscriptInstructionOutcomeContinue;
++	}
++	return kMiniscriptInstructionOutcomeFailed;
++}
++
 +MiniscriptInstructionOutcome RotatorModifier::scriptSetPaused(MiniscriptThread *thread, const DynamicValue &value) {
 +	if (value.getType() == DynamicValueTypes::kBoolean) {
 +		_paused = value.getBool();
@@ -3675,10 +3959,10 @@ index 4a186f02..6829f602 100644
  
  #ifdef MTROPOLIS_DEBUG_ENABLE
 diff --git a/engines/mtropolis/plugin/thereware.h b/engines/mtropolis/plugin/thereware.h
-index 3039a9b0..5a95fb3e 100644
+index 3039a9b0..df936924 100644
 --- a/engines/mtropolis/plugin/thereware.h
 +++ b/engines/mtropolis/plugin/thereware.h
-@@ -85,6 +85,11 @@ public:
+@@ -85,16 +85,59 @@ public:
  	bool respondsToEvent(const Event &evt) const override;
  	VThreadState consumeMessage(Runtime *runtime, const Common::SharedPtr<MessageProperties> &msg) override;
  
@@ -3690,7 +3974,11 @@ index 3039a9b0..5a95fb3e 100644
  	void disable(Runtime *runtime) override;
  
  #ifdef MTROPOLIS_DEBUG_ENABLE
-@@ -95,6 +100,41 @@ public:
+ 	const char *debugGetTypeName() const override { return "Rotator Modifier"; }
++	SupportStatus debugGetSupportStatus() const override { return kSupportStatusDone; }
+ 	void debugInspect(IDebugInspectionReport *report) const override;
+ #endif
+ 
  private:
  	Common::SharedPtr<Modifier> shallowClone() const override;
  	const char *getDefaultName() const override;
@@ -3702,9 +3990,11 @@ index 3039a9b0..5a95fb3e 100644
 +	MiniscriptInstructionOutcome scriptSetSize(MiniscriptThread *thread, const DynamicValue &value);
 +	MiniscriptInstructionOutcome scriptSetSizeX(MiniscriptThread *thread, const DynamicValue &value);
 +	MiniscriptInstructionOutcome scriptSetSizeY(MiniscriptThread *thread, const DynamicValue &value);
++	MiniscriptInstructionOutcome scriptWriteRefSizeAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib);
 +	MiniscriptInstructionOutcome scriptSetAxisOffset(MiniscriptThread *thread, const DynamicValue &value);
 +	MiniscriptInstructionOutcome scriptSetAxisOffsetX(MiniscriptThread *thread, const DynamicValue &value);
 +	MiniscriptInstructionOutcome scriptSetAxisOffsetY(MiniscriptThread *thread, const DynamicValue &value);
++	MiniscriptInstructionOutcome scriptWriteRefAxisOffsetAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib);
 +	MiniscriptInstructionOutcome scriptSetPaused(MiniscriptThread *thread, const DynamicValue &value);
 +	MiniscriptInstructionOutcome scriptSetSizeToFit(MiniscriptThread *thread, const DynamicValue &value);
 +
@@ -3733,7 +4023,7 @@ index 3039a9b0..5a95fb3e 100644
  
  class TrackerModifier : public Modifier {
 diff --git a/engines/mtropolis/runtime.cpp b/engines/mtropolis/runtime.cpp
-index 0a9b567b..9cc4f91d 100644
+index 0a9b567b..a9fd85a8 100644
 --- a/engines/mtropolis/runtime.cpp
 +++ b/engines/mtropolis/runtime.cpp
 @@ -23,6 +23,7 @@
@@ -3829,7 +4119,16 @@ index 0a9b567b..9cc4f91d 100644
  			return varContents.convertToTypeNoDereference(targetType, result);
  		}
  	}
-@@ -1773,6 +1805,9 @@ bool DynamicValue::convertIntToType(DynamicValueTypes::DynamicValueType targetTy
+@@ -1647,7 +1679,7 @@ bool DynamicValue::convertToTypeNoDereference(DynamicValueTypes::DynamicValueTyp
+ 		break;
+ 	}
+ 
+-	warning("Couldn't convert dynamic value from source type");
++	warning("Couldn't convert dynamic value from source type=%d to targetType=%d", (int)_type, (int)targetType);
+ 	return false;
+ }
+ 
+@@ -1773,8 +1805,11 @@ bool DynamicValue::convertIntToType(DynamicValueTypes::DynamicValueType targetTy
  	case DynamicValueTypes::kFloat:
  		result.setFloat(value);
  		return true;
@@ -3837,8 +4136,38 @@ index 0a9b567b..9cc4f91d 100644
 +		result.setString(Common::String::format("%i", static_cast<int>(value)));
 +		return true;
  	default:
- 		warning("Unable to implicitly convert dynamic value");
+-		warning("Unable to implicitly convert dynamic value");
++		warning("Unable to implicitly convert dynamic value from int(%d) to targetType=%d", (int)value, (int)targetType);
  		return false;
+ 	}
+ }
+@@ -1793,7 +1828,7 @@ bool DynamicValue::convertFloatToType(DynamicValueTypes::DynamicValueType target
+ 		result.setFloat(value);
+ 		return true;
+ 	default:
+-		warning("Unable to implicitly convert dynamic value");
++		warning("Unable to implicitly convert dynamic value from float(%g) to targetType=%d", value, (int)targetType);
+ 		return false;
+ 	}
+ }
+@@ -1812,7 +1847,7 @@ bool DynamicValue::convertBoolToType(DynamicValueTypes::DynamicValueType targetT
+ 		result.setFloat(value ? 1.0 : 0.0);
+ 		return true;
+ 	default:
+-		warning("Unable to implicitly convert dynamic value");
++		warning("Unable to implicitly convert dynamic value from bool(%d) to targetType=%d", (int)value, (int)targetType);
+ 		return false;
+ 	}
+ }
+@@ -1842,7 +1877,7 @@ bool DynamicValue::convertStringToType(DynamicValueTypes::DynamicValueType targe
+ 	default:
+ 		break;
+ 	}
+-	warning("Unable to implicitly convert dynamic value");
++	warning("Unable to implicitly convert dynamic value from string('%s') to targetType=%d", value.c_str(), (int)targetType);
+ 	return false;
+ }
+ 
 @@ -2079,16 +2114,12 @@ void DynamicValueSource::initFromOther(DynamicValueSource &&other) {
  }
  
@@ -3906,6 +4235,22 @@ index 0a9b567b..9cc4f91d 100644
  }
  
  void MessengerSendSpec::resolveDestination(Runtime *runtime, Modifier *sender, RuntimeObject *triggerSource, Common::WeakPtr<Structural> &outStructuralDest, Common::WeakPtr<Modifier> &outModifierDest, RuntimeObject *customDestination) const {
+@@ -2550,13 +2578,13 @@ void VarReference::linkInternalReferences(ObjectLinkingScope *scope) {
+ 	if (guid) {
+ 		Common::WeakPtr<RuntimeObject> obj = scope->resolve(guid, source, false);
+ 		if (obj.expired()) {
+-			warning("VarReference to '%s' failed to resolve a valid object", source.c_str());
++			warning("VarReference to (%x '%s') failed to resolve a valid object", guid, source.c_str());
+ 		} else {
+ 			Common::SharedPtr<RuntimeObject> objShr = obj.lock();
+ 			if (objShr->isModifier())
+ 				this->resolution = obj.staticCast<Modifier>();
+ 			else
+-				warning("VarReference to '%s' wasn't a modifier", source.c_str());
++				warning("VarReference to (%x '%s') wasn't a modifier", guid, source.c_str());
+ 		}
+ 	}
+ }
 @@ -3001,6 +3029,9 @@ bool WorldManagerInterface::readAttribute(MiniscriptThread *thread, DynamicValue
  	} else if (attrib == "clickcount") {
  		result.setInt(thread->getRuntime()->getMultiClickCount());
@@ -3940,7 +4285,7 @@ index 0a9b567b..9cc4f91d 100644
  		if (parent)
  			result.setObject(parent->getSelfReference());
  		else
-@@ -3400,12 +3435,14 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
+@@ -3400,12 +3435,18 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
  		RuntimeObject *possibleScene = this;
  		while (possibleScene) {
  			if (possibleScene->isModifier()) {
@@ -3954,10 +4299,14 @@ index 0a9b567b..9cc4f91d 100644
 -				Structural *parent = static_cast<Structural *>(possibleScene)->getParent();
 +				RuntimeObject *pending = thread->getRuntime()->getPendingNewParent(possibleScene);
 +				Structural *parent = (pending && pending->isStructural()) ? static_cast<Structural *>(pending) : static_cast<Structural *>(possibleScene)->getParent();
++				if (!parent) {
++					possibleScene = nullptr;
++					break;
++				}
  				if (parent->isSubsection())
  					break;
  				else {
-@@ -3432,12 +3469,14 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
+@@ -3432,12 +3473,14 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
  				break;
  
  			if (possibleSection->isModifier()) {
@@ -3974,7 +4323,7 @@ index 0a9b567b..9cc4f91d 100644
  				continue;
  			}
  
-@@ -3459,12 +3498,14 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
+@@ -3459,12 +3502,14 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
  				break;
  
  			if (possibleSubsection->isModifier()) {
@@ -3991,7 +4340,7 @@ index 0a9b567b..9cc4f91d 100644
  				continue;
  			}
  
-@@ -3479,9 +3520,16 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
+@@ -3479,9 +3524,16 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
  	} else if (attrib == "flushpriority") {
  		result.setInt(_flushPriority);
  		return true;
@@ -4008,7 +4357,7 @@ index 0a9b567b..9cc4f91d 100644
  		if (_children.size() == 0)
  			result.clear();
  		else
-@@ -3509,12 +3557,8 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
+@@ -3509,12 +3561,8 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
  	if (RuntimeObject::readAttribute(thread, result, attrib))
  		return true;
  
@@ -4023,7 +4372,26 @@ index 0a9b567b..9cc4f91d 100644
  
  	// Traverse children (modifiers must be first)
  	for (const Common::SharedPtr<Modifier> &modifier : _modifiers) {
-@@ -3582,8 +3626,16 @@ MiniscriptInstructionOutcome Structural::writeRefAttribute(MiniscriptThread *thr
+@@ -3531,6 +3579,18 @@ bool Structural::readAttribute(MiniscriptThread *thread, DynamicValue &result, c
+ 		}
+ 	}
+ 
++	if (attrib == "angle") {
++		for (const Common::SharedPtr<Modifier> &modifier : _modifiers) {
++			Common::Point dummySize, dummyOffset;
++			double dummyAngle = 0.0;
++			if (modifier->getRotatorProperties(nullptr, dummySize, dummyOffset, dummyAngle))
++				return modifier->readAttribute(thread, result, attrib);
++		}
++	} else if (attrib == "nom") {
++		result.setString(_name);
++		return true;
++	}
++
+ 	return false;
+ }
+ 
+@@ -3582,8 +3642,16 @@ MiniscriptInstructionOutcome Structural::writeRefAttribute(MiniscriptThread *thr
  	} else if (attrib == "unload") {
  		DynamicValueWriteFuncHelper<Structural, &Structural::scriptSetUnload, false>::create(this, result);
  		return kMiniscriptInstructionOutcomeContinue;
@@ -4040,7 +4408,24 @@ index 0a9b567b..9cc4f91d 100644
  	// Attempt to resolve as a child object
  	// Modifiers are first, then structural
  	for (const Common::SharedPtr<Modifier> &modifier : _modifiers) {
-@@ -3605,12 +3657,8 @@ MiniscriptInstructionOutcome Structural::writeRefAttribute(MiniscriptThread *thr
+@@ -3600,17 +3668,25 @@ MiniscriptInstructionOutcome Structural::writeRefAttribute(MiniscriptThread *thr
+ 		}
+ 	}
+ 
++	if (attrib == "angle") {
++		for (const Common::SharedPtr<Modifier> &modifier : _modifiers) {
++			Common::Point dummySize, dummyOffset;
++			double dummyAngle = 0.0;
++			if (modifier->getRotatorProperties(nullptr, dummySize, dummyOffset, dummyAngle))
++				return modifier->writeRefAttribute(thread, result, attrib);
++		}
++	} else if (attrib == "nom") {
++		DynamicValueWriteDiscardHelper::create(result);
++		return kMiniscriptInstructionOutcomeContinue;
++	}
++
+ 	return RuntimeObject::writeRefAttribute(thread, result, attrib);
+ }
  
  bool Structural::readAttributeIndexed(MiniscriptThread *thread, DynamicValue &result, const Common::String &attrib, const DynamicValue &index) {
  	if (attrib == "nthelement") {
@@ -4055,7 +4440,7 @@ index 0a9b567b..9cc4f91d 100644
  
  		DynamicValue indexConverted;
  		if (!index.convertToType(DynamicValueTypes::kInteger, indexConverted)) {
-@@ -3629,9 +3677,25 @@ bool Structural::readAttributeIndexed(MiniscriptThread *thread, DynamicValue &re
+@@ -3629,9 +3705,25 @@ bool Structural::readAttributeIndexed(MiniscriptThread *thread, DynamicValue &re
  		return true;
  	}
  
@@ -4081,7 +4466,7 @@ index 0a9b567b..9cc4f91d 100644
  
  const Common::Array<Common::SharedPtr<Structural> > &Structural::getChildren() const {
  	return _children;
-@@ -3642,6 +3706,18 @@ void Structural::addChild(const Common::SharedPtr<Structural>& child) {
+@@ -3642,6 +3734,18 @@ void Structural::addChild(const Common::SharedPtr<Structural>& child) {
  	child->setParent(this);
  }
  
@@ -4100,7 +4485,7 @@ index 0a9b567b..9cc4f91d 100644
  void Structural::removeAllChildren() {
  	_children.clear();
  }
-@@ -3796,9 +3872,19 @@ void Structural::materializeDescendents(Runtime *runtime, ObjectLinkingScope *ou
+@@ -3796,9 +3900,19 @@ void Structural::materializeDescendents(Runtime *runtime, ObjectLinkingScope *ou
  
  	for (Common::Array<Common::SharedPtr<Modifier> >::iterator it = _modifiers.begin(), itEnd = _modifiers.end(); it != itEnd; ++it) {
  		Common::SharedPtr<Modifier> &modifierRef = *it;
@@ -4121,7 +4506,7 @@ index 0a9b567b..9cc4f91d 100644
  	}
  
  	for (Common::Array<Common::SharedPtr<Modifier> >::const_iterator it = _modifiers.begin(), itEnd = _modifiers.end(); it != itEnd; ++it) {
-@@ -3808,7 +3894,6 @@ void Structural::materializeDescendents(Runtime *runtime, ObjectLinkingScope *ou
+@@ -3808,7 +3922,6 @@ void Structural::materializeDescendents(Runtime *runtime, ObjectLinkingScope *ou
  
  	structuralScope->setParent(modifierScope);
  
@@ -4129,7 +4514,7 @@ index 0a9b567b..9cc4f91d 100644
  	for (Common::Array<Common::SharedPtr<Structural> >::const_iterator it = children.begin(), itEnd = children.end(); it != itEnd; ++it) {
  		Structural *child = it->get();
  		structuralScope->addObject(child->getStaticGUID(), child->getName(), *it);
-@@ -3854,6 +3939,12 @@ CORO_BEGIN_DEFINITION(Structural::StructuralConsumeCommandCoroutine)
+@@ -3854,6 +3967,12 @@ CORO_BEGIN_DEFINITION(Structural::StructuralConsumeCommandCoroutine)
  
  			CORO_CALL(Runtime::SendMessageOnVThreadCoroutine, params->runtime, dispatch);
  
@@ -4142,7 +4527,7 @@ index 0a9b567b..9cc4f91d 100644
  			CORO_RETURN;
  		CORO_ELSE_IF(params->msg->getEvent().eventType == EventIDs::kAttribSet)
  			locals->attribID = params->msg->getEvent().eventInfo;
-@@ -4084,6 +4175,13 @@ Common::WeakPtr<RuntimeObject> ObjectLinkingScope::resolve(const Common::String
+@@ -4084,6 +4203,13 @@ Common::WeakPtr<RuntimeObject> ObjectLinkingScope::resolve(const Common::String
  
  	Common::HashMap<Common::String, Common::WeakPtr<RuntimeObject> >::const_iterator it = _nameToObject.find(*namePtr);
  	if (it != _nameToObject.end()) {
@@ -4156,7 +4541,7 @@ index 0a9b567b..9cc4f91d 100644
  		return it->_value;
  	} else {
  		if (_parent)
-@@ -4584,7 +4682,7 @@ Runtime::Runtime(OSystem *system, Audio::Mixer *mixer, ISaveUIProvider *saveProv
+@@ -4584,7 +4710,7 @@ Runtime::Runtime(OSystem *system, Audio::Mixer *mixer, ISaveUIProvider *saveProv
  	_getSetAttribIDsToAttribName[AttributeIDs::kAttribVisible] = "visible";
  	_getSetAttribIDsToAttribName[AttributeIDs::kAttribLayer] = "layer";
  	_getSetAttribIDsToAttribName[AttributeIDs::kAttribPaused] = "paused";
@@ -4165,7 +4550,7 @@ index 0a9b567b..9cc4f91d 100644
  	_getSetAttribIDsToAttribName[AttributeIDs::kAttribPosition] = "position";
  	_getSetAttribIDsToAttribName[AttributeIDs::kAttribWidth] = "width";
  	_getSetAttribIDsToAttribName[AttributeIDs::kAttribHeight] = "height";
-@@ -4618,6 +4716,14 @@ bool Runtime::runFrame() {
+@@ -4618,6 +4744,14 @@ bool Runtime::runFrame() {
  	_realTime = timeMillis - _realTimeBase;
  	_playTime = timeMillis - _playTimeBase;
  
@@ -4180,7 +4565,7 @@ index 0a9b567b..9cc4f91d 100644
  	for (;;) {
  #ifdef MTROPOLIS_DEBUG_ENABLE
  		if (_debugger && _debugger->isPaused())
-@@ -4732,6 +4838,22 @@ bool Runtime::runFrame() {
+@@ -4732,6 +4866,305 @@ bool Runtime::runFrame() {
  				}
  			}
  
@@ -4196,6 +4581,289 @@ index 0a9b567b..9cc4f91d 100644
 +					}
 +				}
 +				debug(1, "=== AUDIT COMPLETE: %u scenes loaded and materialized ===", totalScenes);
++
++#ifdef MTROPOLIS_DEBUG_ENABLE
++				struct AuditStats {
++					Common::HashMap<Common::String, uint32> elementCounts;
++					Common::HashMap<Common::String, uint32> modifierCounts;
++					Common::HashMap<Common::String, SupportStatus> modifierStatus;
++					Common::HashMap<Common::String, uint32> attributeReads;
++					Common::HashMap<Common::String, uint32> attributeWrites;
++					uint32 totalMiniscripts = 0;
++					uint32 totalIfMessengers = 0;
++					uint32 totalMessengers = 0;
++					uint32 totalSetModifiers = 0;
++					uint32 unimplementedInstrCount = 0;
++					uint32 unresolvedLocalRefCount = 0;
++					uint32 unresolvedGlobalRefCount = 0;
++					uint32 unresolvedMessengerDestCount = 0;
++					uint32 unresolvedVarRefCount = 0;
++					uint32 failedAttrReadCount = 0;
++					uint32 failedAttrWriteCount = 0;
++
++					void auditSendSpec(const MessengerSendSpec &spec, Modifier *mod, const Common::String &scenePath) {
++						if (spec._linkType == MessengerSendSpec::kLinkTypeUnresolved) {
++							unresolvedMessengerDestCount++;
++							warning("AUDIT: Unresolved MessengerSendSpec destination (guid=%x) in modifier (%x '%s' [%s]) in scene [%s]",
++								spec.destination, mod->getStaticGUID(), mod->getName().c_str(), mod->debugGetTypeName(), scenePath.c_str());
++						} else if (spec._linkType == MessengerSendSpec::kLinkTypeNotYetLinked) {
++							unresolvedMessengerDestCount++;
++							warning("AUDIT: Unlinked MessengerSendSpec in modifier (%x '%s' [%s]) in scene [%s]",
++								mod->getStaticGUID(), mod->getName().c_str(), mod->debugGetTypeName(), scenePath.c_str());
++						}
++						if (spec.with.getSourceType() == DynamicValueSourceTypes::kVariableReference) {
++							const VarReference &vref = spec.with.getVarReference();
++							if (vref.guid != 0 && vref.resolution.expired()) {
++								unresolvedVarRefCount++;
++								warning("AUDIT: Unresolved VarReference (guid=%x '%s') in MessengerSendSpec.with on modifier (%x '%s' [%s]) in scene [%s]",
++									vref.guid, vref.source.c_str(), mod->getStaticGUID(), mod->getName().c_str(), mod->debugGetTypeName(), scenePath.c_str());
++							}
++						}
++					}
++
++					void auditMiniscript(Runtime *rt, Modifier *mod, const Common::SharedPtr<MiniscriptProgram> &prog, const Common::SharedPtr<MiniscriptReferences> &refs, const Common::String &scenePath) {
++						if (!prog)
++							return;
++						if (refs) {
++							for (const MiniscriptReferences::LocalRef &lr : refs->getLocalRefs()) {
++								if (lr.guid != 0 && lr.resolution.expired()) {
++									unresolvedLocalRefCount++;
++									warning("AUDIT: Unresolved Miniscript LocalRef (guid=%x '%s') in modifier (%x '%s' [%s]) in scene [%s]",
++										lr.guid, lr.name.c_str(), mod->getStaticGUID(), mod->getName().c_str(), mod->debugGetTypeName(), scenePath.c_str());
++								}
++							}
++							for (const MiniscriptReferences::GlobalRef &gr : refs->getGlobalRefs()) {
++								if (gr.guid != 0 && gr.resolution.expired()) {
++									unresolvedGlobalRefCount++;
++									warning("AUDIT: Unresolved Miniscript GlobalRef (guid=%x) in modifier (%x '%s' [%s]) in scene [%s]",
++										gr.guid, mod->getStaticGUID(), mod->getName().c_str(), mod->debugGetTypeName(), scenePath.c_str());
++								}
++							}
++						}
++
++						const Common::Array<MiniscriptInstruction *> &instrs = prog->getInstructions();
++						const Common::Array<MiniscriptProgram::Attribute> &attribs = prog->getAttributes();
++
++						Common::SharedPtr<MessageProperties> dummyProps(new MessageProperties(Event(), DynamicValue(), mod->getSelfReference()));
++						MiniscriptThread dummyThread(rt, dummyProps, prog, refs, mod);
++
++						for (size_t i = 0; i < instrs.size(); i++) {
++							const MiniscriptInstruction *ins = instrs[i];
++							if (dynamic_cast<const MiniscriptInstructions::UnimplementedInstruction *>(ins)) {
++								unimplementedInstrCount++;
++								warning("AUDIT: UnimplementedInstruction at index %u in modifier (%x '%s' [%s]) in scene [%s]",
++									(uint)i, mod->getStaticGUID(), mod->getName().c_str(), mod->debugGetTypeName(), scenePath.c_str());
++							}
++							if (const MiniscriptInstructions::GetChild *gc = dynamic_cast<const MiniscriptInstructions::GetChild *>(ins)) {
++								Common::String attrName = (gc->getAttributeIndex() < attribs.size()) ? attribs[gc->getAttributeIndex()].name : "<invalid>";
++								Common::String key = Common::String::format("%s%s", attrName.c_str(), gc->isIndexed() ? "[]" : "");
++								if (gc->isLValue())
++									attributeWrites[key]++;
++								else
++									attributeReads[key]++;
++
++								// Static-symbolic check if preceded by PushValue(LocalRef/GlobalRef) or PushGlobal
++								if (i > 0) {
++									Common::SharedPtr<RuntimeObject> targetObj;
++									const MiniscriptInstruction *prev = instrs[i - 1];
++									if (const MiniscriptInstructions::PushValue *pv = dynamic_cast<const MiniscriptInstructions::PushValue *>(prev)) {
++										if (pv->getDataType() == MiniscriptInstructions::PushValue::kDataTypeLocalRef && refs) {
++											targetObj = refs->getRefByIndex(pv->getRefIndex()).lock();
++										} else if (pv->getDataType() == MiniscriptInstructions::PushValue::kDataTypeGlobalRef && refs) {
++											targetObj = refs->getGlobalRefByIndex(pv->getRefIndex()).lock();
++										}
++									} else if (const MiniscriptInstructions::PushGlobal *pg = dynamic_cast<const MiniscriptInstructions::PushGlobal *>(prev)) {
++										uint32 gid = pg->getGlobalID();
++										if (gid == MiniscriptInstructions::PushGlobal::kGlobalRefModifier) {
++											targetObj = mod->getSelfReference().lock();
++										} else if (gid == MiniscriptInstructions::PushGlobal::kGlobalRefProject) {
++											targetObj = rt->getProject()->getSelfReference().lock();
++										} else if (gid == MiniscriptInstructions::PushGlobal::kGlobalRefElement || gid == MiniscriptInstructions::PushGlobal::kGlobalRefScene || gid == MiniscriptInstructions::PushGlobal::kGlobalRefSection) {
++											Common::WeakPtr<RuntimeObject> ref = mod->getSelfReference();
++											while (!ref.expired()) {
++												Common::SharedPtr<RuntimeObject> o = ref.lock();
++												bool match = false;
++												if (gid == MiniscriptInstructions::PushGlobal::kGlobalRefElement)
++													match = o->isStructural();
++												else if (gid == MiniscriptInstructions::PushGlobal::kGlobalRefSection)
++													match = o->isSection();
++												else if (gid == MiniscriptInstructions::PushGlobal::kGlobalRefScene) {
++													Structural *p = o->isElement() ? static_cast<Element *>(o.get())->getParent() : nullptr;
++													match = o->isElement() && p && p->isSubsection();
++												}
++												if (match) {
++													targetObj = o;
++													break;
++												}
++												if (o->isStructural()) {
++													Structural *p = static_cast<Structural *>(o.get())->getParent();
++													ref = p ? p->getSelfReference() : Common::WeakPtr<RuntimeObject>();
++												} else if (o->isModifier()) {
++													ref = static_cast<Modifier *>(o.get())->getParent();
++												} else {
++													break;
++												}
++											}
++										}
++									}
++
++									if (targetObj && !gc->isIndexed()) {
++										const char *tName = targetObj->isModifier() ? static_cast<Modifier *>(targetObj.get())->debugGetTypeName() : (targetObj->isStructural() ? static_cast<Structural *>(targetObj.get())->debugGetTypeName() : "RuntimeObject");
++										Common::String objName = targetObj->isModifier() ? static_cast<Modifier *>(targetObj.get())->getName() : (targetObj->isStructural() ? static_cast<Structural *>(targetObj.get())->getName() : "");
++
++										// Check if the NEXT instruction is also a GetChild (chained attribute access like obj.position.x or obj.size.x)
++										const MiniscriptInstructions::GetChild *nextGc = (i + 1 < instrs.size()) ? dynamic_cast<const MiniscriptInstructions::GetChild *>(instrs[i + 1]) : nullptr;
++										if (gc->isLValue()) {
++											DynamicValueWriteProxy proxy;
++											MiniscriptInstructionOutcome out = targetObj->writeRefAttribute(&dummyThread, proxy, attrName);
++											if (out == kMiniscriptInstructionOutcomeFailed) {
++												failedAttrWriteCount++;
++												warning("AUDIT: writeRefAttribute('%s') FAILED on (%x '%s' [%s]) in modifier (%x '%s') in scene [%s]",
++													attrName.c_str(), targetObj->getStaticGUID(), objName.c_str(), tName, mod->getStaticGUID(), mod->getName().c_str(), scenePath.c_str());
++											} else if (nextGc && nextGc->isLValue() && !nextGc->isIndexed()) {
++												Common::String nextAttr = (nextGc->getAttributeIndex() < attribs.size()) ? attribs[nextGc->getAttributeIndex()].name : "<invalid>";
++												MiniscriptInstructionOutcome out2 = proxy.pod.ifc->refAttrib(&dummyThread, proxy, proxy.pod.objectRef, proxy.pod.ptrOrOffset, nextAttr);
++												if (out2 == kMiniscriptInstructionOutcomeFailed) {
++													failedAttrWriteCount++;
++													DynamicValue intermVal;
++													Common::String intermInfo = "unknown";
++													if (targetObj->readAttribute(&dummyThread, intermVal, attrName) && intermVal.getType() == DynamicValueTypes::kObject) {
++														Common::SharedPtr<RuntimeObject> io = intermVal.getObject().object.lock();
++														if (io) {
++															const char *itName = io->isModifier() ? static_cast<Modifier *>(io.get())->debugGetTypeName() : (io->isStructural() ? static_cast<Structural *>(io.get())->debugGetTypeName() : "RuntimeObject");
++															Common::String ioName = io->isModifier() ? static_cast<Modifier *>(io.get())->getName() : (io->isStructural() ? static_cast<Structural *>(io.get())->getName() : "");
++															intermInfo = Common::String::format("(%x '%s' [%s])", io->getStaticGUID(), ioName.c_str(), itName);
++															if (io->isStructural()) {
++																Structural *st = static_cast<Structural *>(io.get());
++																intermInfo += " mods=[";
++																for (const auto &m : st->getModifiers())
++																	intermInfo += Common::String::format("%s(%s),", m->getName().c_str(), m->debugGetTypeName());
++																intermInfo += "]";
++															}
++														}
++													}
++													warning("AUDIT: Chained writeRefAttribute('%s.%s') FAILED on (%x '%s' [%s]) via %s in modifier (%x '%s') in scene [%s]",
++														attrName.c_str(), nextAttr.c_str(), targetObj->getStaticGUID(), objName.c_str(), tName, intermInfo.c_str(), mod->getStaticGUID(), mod->getName().c_str(), scenePath.c_str());
++												}
++											}
++										} else {
++											DynamicValue val;
++											if (!targetObj->readAttribute(&dummyThread, val, attrName)) {
++												failedAttrReadCount++;
++												warning("AUDIT: readAttribute('%s') FAILED on (%x '%s' [%s]) in modifier (%x '%s') in scene [%s]",
++													attrName.c_str(), targetObj->getStaticGUID(), objName.c_str(), tName, mod->getStaticGUID(), mod->getName().c_str(), scenePath.c_str());
++											}
++										}
++									}
++								}
++							}
++						}
++					}
++
++					void walkModifier(Runtime *rt, Modifier *mod, const Common::String &scenePath) {
++						Common::String typeName = mod->debugGetTypeName();
++						modifierCounts[typeName]++;
++						SupportStatus st = mod->debugGetSupportStatus();
++						modifierStatus[typeName] = st;
++						if (st != kSupportStatusDone) {
++							warning("AUDIT: Modifier (%x '%s' [%s]) has SupportStatus=%d in scene [%s]",
++								mod->getStaticGUID(), mod->getName().c_str(), typeName.c_str(), (int)st, scenePath.c_str());
++						}
++
++						if (MiniscriptModifier *ms = dynamic_cast<MiniscriptModifier *>(mod)) {
++							totalMiniscripts++;
++							auditMiniscript(rt, mod, ms->getProgram(), ms->getReferences(), scenePath);
++						} else if (IfMessengerModifier *ifm = dynamic_cast<IfMessengerModifier *>(mod)) {
++							totalIfMessengers++;
++							auditMiniscript(rt, mod, ifm->getProgram(), ifm->getReferences(), scenePath);
++							auditSendSpec(ifm->getSendSpec(), mod, scenePath);
++						} else if (MessengerModifier *mm = dynamic_cast<MessengerModifier *>(mod)) {
++							totalMessengers++;
++							auditSendSpec(mm->getSendSpec(), mod, scenePath);
++						} else if (SetModifier *sm = dynamic_cast<SetModifier *>(mod)) {
++							totalSetModifiers++;
++							if (sm->getSource().getSourceType() == DynamicValueSourceTypes::kVariableReference) {
++								const VarReference &vr = sm->getSource().getVarReference();
++								if (vr.guid != 0 && vr.resolution.expired()) {
++									unresolvedVarRefCount++;
++									warning("AUDIT: Unresolved SetModifier source VarRef (guid=%x '%s') in (%x '%s') in scene [%s]",
++										vr.guid, vr.source.c_str(), mod->getStaticGUID(), mod->getName().c_str(), scenePath.c_str());
++								}
++							}
++							if (sm->getTarget().getSourceType() == DynamicValueSourceTypes::kVariableReference) {
++								const VarReference &vr = sm->getTarget().getVarReference();
++								if (vr.guid != 0 && vr.resolution.expired()) {
++									unresolvedVarRefCount++;
++									warning("AUDIT: Unresolved SetModifier target VarRef (guid=%x '%s') in (%x '%s') in scene [%s]",
++										vr.guid, vr.source.c_str(), mod->getStaticGUID(), mod->getName().c_str(), scenePath.c_str());
++								}
++							}
++						}
++
++						if (IModifierContainer *childCont = mod->getChildContainer()) {
++							for (const Common::SharedPtr<Modifier> &childMod : childCont->getModifiers()) {
++								walkModifier(rt, childMod.get(), scenePath);
++							}
++						}
++					}
++
++					void walkStructural(Runtime *rt, Structural *st, const Common::String &scenePath) {
++						Common::String typeName = st->debugGetTypeName();
++						elementCounts[typeName]++;
++						SupportStatus status = st->debugGetSupportStatus();
++						if (status != kSupportStatusDone) {
++							warning("AUDIT: Structural (%x '%s' [%s]) has SupportStatus=%d in scene [%s]",
++								st->getStaticGUID(), st->getName().c_str(), typeName.c_str(), (int)status, scenePath.c_str());
++						}
++
++						for (const Common::SharedPtr<Modifier> &mod : st->getModifiers()) {
++							walkModifier(rt, mod.get(), scenePath);
++						}
++						for (const Common::SharedPtr<Structural> &child : st->getChildren()) {
++							Common::String childPath = scenePath;
++							if (st->isSubsection())
++								childPath = scenePath + " / " + child->getName();
++							else if (st->isSection())
++								childPath = child->getName();
++							walkStructural(rt, child.get(), childPath);
++						}
++					}
++				};
++
++				AuditStats stats;
++				stats.walkStructural(this, _project.get(), "Project");
++				for (const Common::SharedPtr<Modifier> &gmod : _project->getGlobalModifiers().getModifiers()) {
++					if (gmod && gmod->isVariable())
++						stats.walkModifier(this, gmod.get(), "GlobalModifiers");
++				}
++
++				debug(1, "=== AUDIT SUMMARY ===");
++				for (auto it = stats.elementCounts.begin(); it != stats.elementCounts.end(); ++it) {
++					debug(1, "  ElementClass %-35s : %u", it->_key.c_str(), it->_value);
++				}
++				for (auto it = stats.modifierCounts.begin(); it != stats.modifierCounts.end(); ++it) {
++					debug(1, "  ModifierClass %-34s : %u (status=%d)", it->_key.c_str(), it->_value, (int)stats.modifierStatus[it->_key]);
++				}
++				for (auto it = stats.attributeReads.begin(); it != stats.attributeReads.end(); ++it) {
++					debug(1, "  AttrRead  %-30s : %u", it->_key.c_str(), it->_value);
++				}
++				for (auto it = stats.attributeWrites.begin(); it != stats.attributeWrites.end(); ++it) {
++					debug(1, "  AttrWrite %-30s : %u", it->_key.c_str(), it->_value);
++				}
++				debug(1, "  Total MiniscriptModifiers : %u", stats.totalMiniscripts);
++				debug(1, "  Total IfMessengerModifiers: %u", stats.totalIfMessengers);
++				debug(1, "  Total MessengerModifiers  : %u", stats.totalMessengers);
++				debug(1, "  Total SetModifiers        : %u", stats.totalSetModifiers);
++				debug(1, "  UnimplementedInstructions : %u", stats.unimplementedInstrCount);
++				debug(1, "  Unresolved LocalRefs      : %u", stats.unresolvedLocalRefCount);
++				debug(1, "  Unresolved GlobalRefs     : %u", stats.unresolvedGlobalRefCount);
++				debug(1, "  Unresolved MessengerDests : %u", stats.unresolvedMessengerDestCount);
++				debug(1, "  Unresolved VarRefs        : %u", stats.unresolvedVarRefCount);
++				debug(1, "  Failed Static AttrReads   : %u", stats.failedAttrReadCount);
++				debug(1, "  Failed Static AttrWrites  : %u", stats.failedAttrWriteCount);
++				debug(1, "=== END AUDIT SUMMARY ===");
++#endif
++
 +				if (gDebugLevel >= 10)
 +					return false;
 +			}
@@ -4203,7 +4871,7 @@ index 0a9b567b..9cc4f91d 100644
  			debug(1, "Project is fully loaded!  Starting up...");
  
  			if (_project->getChildren().size() == 0) {
-@@ -4759,57 +4881,6 @@ bool Runtime::runFrame() {
+@@ -4759,57 +5192,6 @@ bool Runtime::runFrame() {
  			continue;
  		}
  
@@ -4261,7 +4929,7 @@ index 0a9b567b..9cc4f91d 100644
  		// Teardowns must only occur during idle conditions where there are no VThread tasks
  		if (_pendingTeardowns.size() > 0) {
  			for (Common::Array<Teardown>::const_iterator it = _pendingTeardowns.begin(), itEnd = _pendingTeardowns.end(); it != itEnd; ++it) {
-@@ -4949,6 +5020,65 @@ bool Runtime::runFrame() {
+@@ -4949,6 +5331,65 @@ bool Runtime::runFrame() {
  			}
  		}
  
@@ -4327,7 +4995,7 @@ index 0a9b567b..9cc4f91d 100644
  		if (_collisionCheckTime < _playTime) {
  			_collisionCheckTime = _playTime;
  
-@@ -4975,6 +5105,35 @@ bool Runtime::runFrame() {
+@@ -4975,6 +5416,145 @@ bool Runtime::runFrame() {
  	(void)realMSec;
  #endif
  
@@ -4335,26 +5003,136 @@ index 0a9b567b..9cc4f91d 100644
 +		static bool s_tier2Active = false;
 +		static size_t s_tier2Index = 0;
 +		static uint32 s_tier2WaitFrames = 0;
++		static size_t s_revisitStep = 0;
++		static Common::HashMap<uint32, Common::Point> s_initialPositions;
++		static uint32 s_lastSceneHash = 0;
++		static uint32 s_totalScenesVerified = 0;
++		static uint32 s_totalInvariantFailures = 0;
++
 +		if (!s_tier2Active && _activeMainScene->getStaticGUID() == 0x1a3508) {
 +			s_tier2Active = true;
 +			s_tier2Index = 24;
 +			s_tier2WaitFrames = 0;
-+			debug(1, "=== TIER 2 LIVE CRAWL STARTED AT [%s (guid=%x)] idx=%u ===", _activeMainScene->getName().c_str(), _activeMainScene->getStaticGUID(), (uint)s_tier2Index);
++			s_revisitStep = 0;
++			s_initialPositions.clear();
++			debug(1, "=== PHASE 2 E2E INVARIANT CRAWL STARTED AT [%s (guid=%x)] idx=%u ===", _activeMainScene->getName().c_str(), _activeMainScene->getStaticGUID(), (uint)s_tier2Index);
 +		}
 +		if (s_tier2Active) {
-+			_playTimeBase -= 20;
++			_playTimeBase -= 30;
 +			s_tier2WaitFrames++;
-+			if (s_tier2WaitFrames >= 60) {
++
++			// Snapshot positions at frame 20 (after initial scene object cloning settles)
++			if (s_tier2WaitFrames == 20) {
++				s_initialPositions.clear();
++				Common::Array<Structural *> stack;
++				stack.push_back(_activeMainScene.get());
++				if (_activeSharedScene)
++					stack.push_back(_activeSharedScene.get());
++				while (!stack.empty()) {
++					Structural *cur = stack.back();
++					stack.pop_back();
++					if (cur->isElement() && static_cast<Element *>(cur)->isVisual()) {
++						VisualElement *ve = static_cast<VisualElement *>(cur);
++						if (ve->isVisible()) {
++							Common::Rect r = ve->getRelativeRect();
++							s_initialPositions[ve->getRuntimeGUID()] = Common::Point(r.left, r.top);
++						}
++					}
++					for (const Common::SharedPtr<Structural> &ch : cur->getChildren())
++						stack.push_back(ch.get());
++				}
++			}
++
++			uint32 targetFrames = (s_tier2Index == 24 && s_revisitStep == 0) ? 200 : 90;
++			if (s_tier2WaitFrames >= targetFrames) {
++				// Evaluate scene invariants before transitioning
++				uint32 visibleCount = 0;
++				uint32 movedCount = 0;
++				Common::Array<Structural *> stack;
++				stack.push_back(_activeMainScene.get());
++				if (_activeSharedScene)
++					stack.push_back(_activeSharedScene.get());
++				while (!stack.empty()) {
++					Structural *cur = stack.back();
++					stack.pop_back();
++					if (cur->isElement() && static_cast<Element *>(cur)->isVisual()) {
++						VisualElement *ve = static_cast<VisualElement *>(cur);
++						if (ve->isVisible()) {
++							visibleCount++;
++							Common::Rect r = ve->getRelativeRect();
++							Common::Point pt(r.left, r.top);
++							auto it = s_initialPositions.find(ve->getRuntimeGUID());
++							if (it != s_initialPositions.end() && it->_value != pt)
++								movedCount++;
++						}
++					}
++					for (const Common::SharedPtr<Structural> &ch : cur->getChildren())
++						stack.push_back(ch.get());
++				}
++
++				uint32 nonBlackPixels = 0;
++				uint32 fnvHash = 2166136261u;
++				if (!_mainWindow.expired()) {
++					Common::SharedPtr<Window> mainWindow = _mainWindow.lock();
++					Render::renderProject(this, mainWindow.get(), nullptr);
++					const Graphics::ManagedSurface &surf = *mainWindow->getSurface();
++					int bpp = surf.format.bytesPerPixel;
++					uint8 rBlack = 0, gBlack = 0, bBlack = 0;
++					for (int y = 0; y < surf.h; y++) {
++						const byte *row = static_cast<const byte *>(surf.getBasePtr(0, y));
++						for (int x = 0; x < surf.w; x++) {
++							uint32 px = 0;
++							if (bpp == 4)
++								px = *reinterpret_cast<const uint32 *>(row + x * 4);
++							else if (bpp == 2)
++								px = *reinterpret_cast<const uint16 *>(row + x * 2);
++							else
++								px = row[x];
++							fnvHash = (fnvHash ^ (px & 0xFF)) * 16777619u;
++							fnvHash = (fnvHash ^ ((px >> 8) & 0xFF)) * 16777619u;
++							surf.format.colorToRGB(px, rBlack, gBlack, bBlack);
++							if (rBlack > 8 || gBlack > 8 || bBlack > 8)
++								nonBlackPixels++;
++						}
++					}
++				}
++
++				bool sharedOk = (_activeSharedScene && _activeSharedScene->getStaticGUID() == 0x19f692);
++				bool renderOk = (nonBlackPixels > 10000);
++				s_totalScenesVerified++;
++				if (!sharedOk || !renderOk) {
++					s_totalInvariantFailures++;
++					warning("INVARIANT_FAIL scene=[%s] guid=%x sharedOk=%d nonBlackPixels=%u hash=%08x",
++						_activeMainScene->getName().c_str(), _activeMainScene->getStaticGUID(), (int)sharedOk, nonBlackPixels, fnvHash);
++				} else {
++					debug(1, "INVARIANT_PASS scene=[%s] guid=%x shared=%x visuals=%u moved=%u nonBlack=%u/307200 hash=%08x diffPrev=%d",
++						_activeMainScene->getName().c_str(), _activeMainScene->getStaticGUID(),
++						_activeSharedScene ? _activeSharedScene->getStaticGUID() : 0,
++						visibleCount, movedCount, nonBlackPixels, fnvHash, (int)(fnvHash != s_lastSceneHash));
++				}
++				s_lastSceneHash = fnvHash;
++
 +				s_tier2WaitFrames = 0;
-+				s_tier2Index++;
 +				Structural *subsection = _project->getChildren()[1]->getChildren()[0].get();
++				s_tier2Index++;
++				// Skip scene index 72 ('sauve' quit-transition helper scene) during spread sweep
++				if (s_tier2Index < subsection->getChildren().size() && subsection->getChildren()[s_tier2Index]->getName() == "sauve")
++					s_tier2Index++;
 +				if (s_tier2Index < subsection->getChildren().size()) {
 +					Common::SharedPtr<Structural> nextScene = subsection->getChildren()[s_tier2Index];
 +					debug(1, "=== TIER 2 CRAWL -> [%s (guid=%x)] (%u/%u) ===", nextScene->getName().c_str(), nextScene->getStaticGUID(), (uint)s_tier2Index, (uint)subsection->getChildren().size() - 1);
 +					_pendingSceneTransitions.push_back(HighLevelSceneTransition(nextScene, HighLevelSceneTransition::kTypeChangeToScene, false, false));
 +				} else {
-+					debug(1, "=== TIER 2 LIVE CRAWL COMPLETE ===");
-+					return false;
++					static const size_t kRevisitIndices[] = { 29, 66, 35, 36, 63, 59, 61, 57, 28 };
++					if (s_revisitStep < ARRAYSIZE(kRevisitIndices)) {
++						size_t revIdx = kRevisitIndices[s_revisitStep++];
++						Common::SharedPtr<Structural> nextScene = subsection->getChildren()[revIdx];
++						debug(1, "=== TIER 2 REVISIT -> [%s (guid=%x)] (revisit %u/%u) ===", nextScene->getName().c_str(), nextScene->getStaticGUID(), (uint)s_revisitStep, (uint)ARRAYSIZE(kRevisitIndices));
++						_pendingSceneTransitions.push_back(HighLevelSceneTransition(nextScene, HighLevelSceneTransition::kTypeChangeToScene, false, false));
++					} else {
++						debug(1, "=== TIER 2 LIVE CRAWL COMPLETE: verified=%u failures=%u ===", s_totalScenesVerified, s_totalInvariantFailures);
++						return false;
++					}
 +				}
 +			}
 +		}
@@ -4363,7 +5141,7 @@ index 0a9b567b..9cc4f91d 100644
  	// Frame completed
  	return true;
  }
-@@ -5206,6 +5365,12 @@ void Runtime::executeLowLevelSceneStateTransition(const LowLevelSceneStateTransi
+@@ -5206,6 +5786,12 @@ void Runtime::executeLowLevelSceneStateTransition(const LowLevelSceneStateTransi
  	case LowLevelSceneStateTransitionAction::kHideAllElements:
  		executeSceneChangeRecursiveVisibilityChange(action.getScene().get(), false);
  		break;
@@ -4376,7 +5154,7 @@ index 0a9b567b..9cc4f91d 100644
  	default:
  		assert(false);
  		break;
-@@ -5287,6 +5452,14 @@ void Runtime::executeChangeObjectParent(RuntimeObject *object, RuntimeObject *ne
+@@ -5287,6 +5873,14 @@ void Runtime::executeChangeObjectParent(RuntimeObject *object, RuntimeObject *ne
  		oldParent->removeChild(structural.get());
  		newParentStructural->addChild(structural);
  
@@ -4391,7 +5169,7 @@ index 0a9b567b..9cc4f91d 100644
  		{
  			Common::SharedPtr<MessageProperties> msgProps(new MessageProperties(Event(EventIDs::kParentChanged, 0), DynamicValue(), structural->getSelfReference()));
  			Common::SharedPtr<MessageDispatch> dispatch(new MessageDispatch(msgProps, structural.get(), false, true, false));
-@@ -5334,6 +5507,7 @@ void Runtime::executeCloneObject(RuntimeObject *object) {
+@@ -5334,6 +5928,7 @@ void Runtime::executeCloneObject(RuntimeObject *object) {
  			sendMessageOnVThread(dispatch);
  		}
  	} else if (object->isStructural()) {
@@ -4399,7 +5177,7 @@ index 0a9b567b..9cc4f91d 100644
  		Common::SharedPtr<Structural> structuralRef = object->getSelfReference().lock().staticCast<Structural>();
  		Common::WeakPtr<RuntimeObject> relinkParent = structuralRef->getParent()->getSelfReference();
  
-@@ -5343,9 +5517,16 @@ void Runtime::executeCloneObject(RuntimeObject *object) {
+@@ -5343,9 +5938,16 @@ void Runtime::executeCloneObject(RuntimeObject *object) {
  		ObjectRefRemapper remapper(objectRemaps);
  		remapper.visitChildStructuralRef(structuralRef);
  
@@ -4418,7 +5196,7 @@ index 0a9b567b..9cc4f91d 100644
  
  		{
  			Common::SharedPtr<MessageProperties> msgProps(new MessageProperties(Event(EventIDs::kClone, 0), DynamicValue(), structuralRef));
-@@ -5457,6 +5638,9 @@ void Runtime::executeCompleteTransitionToScene(const Common::SharedPtr<Structura
+@@ -5457,6 +6059,9 @@ void Runtime::executeCompleteTransitionToScene(const Common::SharedPtr<Structura
  			_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(_activeSharedScene, LowLevelSceneStateTransitionAction::kUnload));
  		}
  
@@ -4428,7 +5206,7 @@ index 0a9b567b..9cc4f91d 100644
  		_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(targetSharedScene, LowLevelSceneStateTransitionAction::kLoad));
  		queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kParentEnabled, 0), targetSharedScene.get(), true, true);
  		queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kSceneStarted, 0), targetSharedScene.get(), true, true);
-@@ -5467,6 +5651,8 @@ void Runtime::executeCompleteTransitionToScene(const Common::SharedPtr<Structura
+@@ -5467,6 +6072,8 @@ void Runtime::executeCompleteTransitionToScene(const Common::SharedPtr<Structura
  		sharedSceneEntry.scene = targetSharedScene;
  
  		_sceneStack[0] = sharedSceneEntry;
@@ -4437,7 +5215,7 @@ index 0a9b567b..9cc4f91d 100644
  	}
  
  	{
-@@ -5486,14 +5672,16 @@ void Runtime::executeCompleteTransitionToScene(const Common::SharedPtr<Structura
+@@ -5486,14 +6093,16 @@ void Runtime::executeCompleteTransitionToScene(const Common::SharedPtr<Structura
  	// cleared by the scene transition starting and the cursor reset happens after.  Fix this later...
  	_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(targetScene, LowLevelSceneStateTransitionAction::kAutoResetCursor));
  
@@ -4457,7 +5235,7 @@ index 0a9b567b..9cc4f91d 100644
  }
  
  void Runtime::executeHighLevelSceneReturn() {
-@@ -5519,6 +5707,7 @@ void Runtime::executeHighLevelSceneReturn() {
+@@ -5519,6 +6128,7 @@ void Runtime::executeHighLevelSceneReturn() {
  			queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kParentDisabled, 0), _activeMainScene.get(), true, true);
  			_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(_activeMainScene, LowLevelSceneStateTransitionAction::kUnload));
  
@@ -4465,7 +5243,7 @@ index 0a9b567b..9cc4f91d 100644
  			queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kSceneReactivated, 0), sceneReturn.scene.get(), true, true);
  
  			for (uint i = 1; i < _sceneStack.size(); i++) {
-@@ -5528,9 +5717,7 @@ void Runtime::executeHighLevelSceneReturn() {
+@@ -5528,9 +6138,7 @@ void Runtime::executeHighLevelSceneReturn() {
  				}
  			}
  
@@ -4476,7 +5254,7 @@ index 0a9b567b..9cc4f91d 100644
  		} else {
  			executeCompleteTransitionToScene(sceneReturn.scene);
  		}
-@@ -5584,6 +5771,9 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
+@@ -5584,6 +6192,9 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
  							_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(_activeSharedScene, LowLevelSceneStateTransitionAction::kUnload));
  						}
  
@@ -4486,7 +5264,7 @@ index 0a9b567b..9cc4f91d 100644
  						_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(targetSharedScene, LowLevelSceneStateTransitionAction::kLoad));
  						queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kParentEnabled, 0), targetSharedScene.get(), true, true);
  						queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kSceneStarted, 0), targetSharedScene.get(), true, true);
-@@ -5593,6 +5783,8 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
+@@ -5593,6 +6204,8 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
  						sharedSceneEntry.scene = targetScene;
  
  						_sceneStack[0] = sharedSceneEntry;
@@ -4495,7 +5273,7 @@ index 0a9b567b..9cc4f91d 100644
  					}
  
  
-@@ -5617,10 +5809,7 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
+@@ -5617,10 +6230,7 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
  						_sceneStack.push_back(sceneEntry);
  					}
  
@@ -4507,7 +5285,7 @@ index 0a9b567b..9cc4f91d 100644
  				}
  			} else {
  				executeCompleteTransitionToScene(targetScene);
-@@ -5636,6 +5825,7 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
+@@ -5636,6 +6246,7 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
  					_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(_activeSharedScene, LowLevelSceneStateTransitionAction::kUnload));
  				}
  
@@ -4515,7 +5293,7 @@ index 0a9b567b..9cc4f91d 100644
  				_pendingLowLevelTransitions.push_back(LowLevelSceneStateTransitionAction(targetSharedScene, LowLevelSceneStateTransitionAction::kLoad));
  				queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kParentEnabled, 0), targetSharedScene.get(), true, true);
  				queueEventAsLowLevelSceneStateTransitionAction(Event(EventIDs::kSceneStarted, 0), targetSharedScene.get(), true, true);
-@@ -5645,8 +5835,6 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
+@@ -5645,8 +6256,6 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
  				sharedSceneEntry.scene = targetSharedScene;
  
  				_sceneStack[0] = sharedSceneEntry;
@@ -4524,7 +5302,7 @@ index 0a9b567b..9cc4f91d 100644
  			}
  
  			_sharedSceneWasSetExplicitly = true;
-@@ -5674,20 +5862,20 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
+@@ -5674,20 +6283,20 @@ void Runtime::executeHighLevelSceneTransition(const HighLevelSceneTransition &tr
  	}
  }
  
@@ -4553,7 +5331,7 @@ index 0a9b567b..9cc4f91d 100644
  }
  
  void Runtime::recursiveDeactivateStructural(Structural *structural) {
-@@ -5816,7 +6004,10 @@ void Runtime::recursiveFindMouseCollision(Structural *&bestResult, int32 &bestLa
+@@ -5816,7 +6425,10 @@ void Runtime::recursiveFindMouseCollision(Structural *&bestResult, int32 &bestLa
  					}
  				}
  
@@ -4565,7 +5343,7 @@ index 0a9b567b..9cc4f91d 100644
  					bestResult = candidate;
  					bestLayer = layer;
  					bestStackHeight = stackHeight;
-@@ -6706,6 +6897,11 @@ void Runtime::onMouseUp(int32 x, int32 y, Actions::MouseButton mButton) {
+@@ -6706,6 +7318,11 @@ void Runtime::onMouseUp(int32 x, int32 y, Actions::MouseButton mButton) {
  }
  
  void Runtime::onKeyboardEvent(const Common::EventType evtType, bool repeat, const Common::KeyState &keyEvt) {
@@ -4577,7 +5355,7 @@ index 0a9b567b..9cc4f91d 100644
  	Common::SharedPtr<Window> focusWindow = _keyFocusWindow.lock();
  	if (focusWindow)
  		focusWindow->onKeyboardEvent(evtType, repeat, keyEvt);
-@@ -6964,11 +7160,15 @@ void Runtime::updateCursorElementPosition() {
+@@ -6964,11 +7581,15 @@ void Runtime::updateCursorElementPosition() {
  	if (!element)
  		return;
  
@@ -4596,7 +5374,7 @@ index 0a9b567b..9cc4f91d 100644
  	}
  }
  
-@@ -7194,9 +7394,6 @@ bool Runtime::isIdle() const {
+@@ -7194,9 +7815,6 @@ bool Runtime::isIdle() const {
  	if (_pendingClones.size() > 0)
  		return false;
  
@@ -4606,7 +5384,7 @@ index 0a9b567b..9cc4f91d 100644
  	if (_pendingShowClonedObject.size() > 0)
  		return false;
  
-@@ -7250,6 +7447,14 @@ void Runtime::queueChangeObjectParent(const Common::WeakPtr<RuntimeObject> &obj,
+@@ -7250,6 +7868,14 @@ void Runtime::queueChangeObjectParent(const Common::WeakPtr<RuntimeObject> &obj,
  	_pendingParentChanges.push_back(ObjectParentChange(obj, newParent));
  }
  
@@ -4621,7 +5399,7 @@ index 0a9b567b..9cc4f91d 100644
  void Runtime::hotLoadScene(Structural *structural) {
  	assert(structural->getSceneLoadState() != Structural::SceneLoadState::kNotAScene);
  	loadScene(structural->getSelfReference().lock().staticCast<Structural>());
-@@ -7686,7 +7891,7 @@ Project::Project(Runtime *runtime)
+@@ -7686,7 +8312,7 @@ Project::Project(Runtime *runtime)
  	: Structural(runtime), _projectFormat(Data::kProjectFormatUnknown),
  	  _haveGlobalObjectInfo(false), _haveProjectStructuralDef(false), _playMediaSignaller(new PlayMediaSignaller()),
  	  _keyboardEventSignaller(new KeyboardEventSignaller()),
@@ -4630,7 +5408,7 @@ index 0a9b567b..9cc4f91d 100644
  }
  
  Project::~Project() {
-@@ -7739,6 +7944,7 @@ void Project::loadFromDescription(const ProjectDescription &desc, const Hacks &h
+@@ -7739,6 +8365,7 @@ void Project::loadFromDescription(const ProjectDescription &desc, const Hacks &h
  	_cursorGraphics = desc.getCursorGraphics();
  	_subtitles = desc.getSubtitles();
  	_platform = desc.getPlatform();
@@ -4638,7 +5416,7 @@ index 0a9b567b..9cc4f91d 100644
  	_rootArchive = desc.getRootArchive();
  	_projectRootDir = desc.getProjectRootDir();
  	_runtimeVersion = desc.getRuntimeVersion();
-@@ -8123,6 +8329,104 @@ Common::SeekableReadStream* Project::getStreamForSegment(int segmentIndex) {
+@@ -8123,6 +8750,104 @@ Common::SeekableReadStream* Project::getStreamForSegment(int segmentIndex) {
  	return _segments[segmentIndex].weakStream;
  }
  
@@ -4743,7 +5521,7 @@ index 0a9b567b..9cc4f91d 100644
  const Common::String *Project::findNameOfLabel(const Label &label) const {
  	for (const LabelSuperGroup &superGroup : _labelSuperGroups) {
  		if (superGroup.superGroupID == label.superGroupID) {
-@@ -8380,19 +8684,21 @@ Common::SharedPtr<Modifier> Project::loadModifierObject(ModifierLoaderContext &l
+@@ -8380,19 +9105,21 @@ Common::SharedPtr<Modifier> Project::loadModifierObject(ModifierLoaderContext &l
  
  		const IPlugInModifierFactory *factory = _plugInRegistry.findPlugInModifierFactory(plugInData.modifierName);
  		if (!factory)
@@ -4769,7 +5547,7 @@ index 0a9b567b..9cc4f91d 100644
  	assert(modifier->getModifierFlags().flagsWereLoaded);
  
  	uint32 guid = modifier->getStaticGUID();
-@@ -8980,12 +9286,12 @@ VisualElementRenderProperties &VisualElementRenderProperties::operator=(const Vi
+@@ -8980,12 +9707,12 @@ VisualElementRenderProperties &VisualElementRenderProperties::operator=(const Vi
  }
  
  VisualElement::VisualElement()
@@ -4784,7 +5562,7 @@ index 0a9b567b..9cc4f91d 100644
  	, _rect(other._rect), _cachedAbsoluteOrigin(other._cachedAbsoluteOrigin), _layer(other._layer), _topLeftBevelShading(other._topLeftBevelShading)
  	, _bottomRightBevelShading(other._bottomRightBevelShading), _interiorShading(other._interiorShading), _bevelSize(other._bevelSize)
  	, _dragProps(nullptr), _renderProps(other._renderProps), _primaryGraphicModifier(nullptr), _transitionProps(other._transitionProps)
-@@ -9008,6 +9314,10 @@ bool VisualElement::isVisibleByDefault() const {
+@@ -9008,6 +9735,10 @@ bool VisualElement::isVisibleByDefault() const {
  	return _visibleByDefault;
  }
  
@@ -4795,7 +5573,7 @@ index 0a9b567b..9cc4f91d 100644
  void VisualElement::setVisible(Runtime *runtime, bool visible) {
  	if (_visible != visible) {
  		runtime->setSceneGraphDirty();
-@@ -9043,6 +9353,9 @@ CORO_BEGIN_DEFINITION(VisualElement::VisualElementConsumeCommandCoroutine)
+@@ -9043,6 +9774,9 @@ CORO_BEGIN_DEFINITION(VisualElement::VisualElementConsumeCommandCoroutine)
  
  	CORO_BEGIN_FUNCTION
  		CORO_IF(Event(EventIDs::kElementShow, 0).respondsTo(params->msg->getEvent()))
@@ -4805,7 +5583,7 @@ index 0a9b567b..9cc4f91d 100644
  			if (!params->self->_visible) {
  				params->self->_visible = true;
  				params->runtime->setSceneGraphDirty();
-@@ -9055,6 +9368,9 @@ CORO_BEGIN_DEFINITION(VisualElement::VisualElementConsumeCommandCoroutine)
+@@ -9055,6 +9789,9 @@ CORO_BEGIN_DEFINITION(VisualElement::VisualElementConsumeCommandCoroutine)
  
  			CORO_RETURN;
  		CORO_ELSE_IF(Event(EventIDs::kElementHide, 0).respondsTo(params->msg->getEvent()))
@@ -4815,7 +5593,7 @@ index 0a9b567b..9cc4f91d 100644
  			if (params->self->_visible) {
  				params->self->_visible = false;
  
-@@ -9069,6 +9385,52 @@ CORO_BEGIN_DEFINITION(VisualElement::VisualElementConsumeCommandCoroutine)
+@@ -9069,6 +9806,52 @@ CORO_BEGIN_DEFINITION(VisualElement::VisualElementConsumeCommandCoroutine)
  
  			CORO_CALL(Runtime::SendMessageOnVThreadCoroutine, params->runtime, dispatch);
  
@@ -4868,7 +5646,7 @@ index 0a9b567b..9cc4f91d 100644
  			CORO_RETURN;
  		CORO_END_IF
  
-@@ -9275,6 +9637,9 @@ MiniscriptInstructionOutcome VisualElement::writeRefAttribute(MiniscriptThread *
+@@ -9275,6 +10058,9 @@ MiniscriptInstructionOutcome VisualElement::writeRefAttribute(MiniscriptThread *
  	} else if (attrib == "position") {
  		DynamicValueWriteOrRefAttribFuncHelper<VisualElement, &VisualElement::scriptSetPosition, &VisualElement::scriptWriteRefPositionAttribute>::create(this, writeProxy);
  		return kMiniscriptInstructionOutcomeContinue;
@@ -4878,7 +5656,7 @@ index 0a9b567b..9cc4f91d 100644
  	} else if (attrib == "size") {
  		DynamicValueWriteOrRefAttribFuncHelper<VisualElement, &VisualElement::scriptSetSize, &VisualElement::scriptWriteRefSizeAttribute>::create(this, writeProxy);
  		return kMiniscriptInstructionOutcomeContinue;
-@@ -9432,6 +9797,15 @@ bool VisualElement::needsRender() const {
+@@ -9432,6 +10218,15 @@ bool VisualElement::needsRender() const {
  	if (_renderProps.isDirty() || _prevRect != _rect || _contentsDirty)
  		return true;
  
@@ -4894,7 +5672,7 @@ index 0a9b567b..9cc4f91d 100644
  	return false;
  }
  
-@@ -9450,6 +9824,15 @@ const Common::SharedPtr<Palette> &VisualElement::getPalette() const {
+@@ -9450,6 +10245,15 @@ const Common::SharedPtr<Palette> &VisualElement::getPalette() const {
  	return _palette;
  }
  
@@ -4910,7 +5688,7 @@ index 0a9b567b..9cc4f91d 100644
  void VisualElement::visitInternalReferences(IStructuralReferenceVisitor *visitor) {
  	Element::visitInternalReferences(visitor);
  }
-@@ -9473,7 +9856,6 @@ void VisualElement::debugInspect(IDebugInspectionReport *report) const {
+@@ -9473,7 +10277,6 @@ void VisualElement::debugInspect(IDebugInspectionReport *report) const {
  #endif
  
  MiniscriptInstructionOutcome VisualElement::scriptSetVisibility(MiniscriptThread *thread, const DynamicValue &result) {
@@ -4918,7 +5696,7 @@ index 0a9b567b..9cc4f91d 100644
  	if (result.getType() == DynamicValueTypes::kBoolean) {
  		const bool targetValue = result.getBool();
  
-@@ -9484,7 +9866,16 @@ MiniscriptInstructionOutcome VisualElement::scriptSetVisibility(MiniscriptThread
+@@ -9484,7 +10287,16 @@ MiniscriptInstructionOutcome VisualElement::scriptSetVisibility(MiniscriptThread
  
  		if (_visible != targetValue) {
  			_visible = targetValue;
@@ -4935,7 +5713,7 @@ index 0a9b567b..9cc4f91d 100644
  		}
  		return kMiniscriptInstructionOutcomeContinue;
  	}
-@@ -9499,6 +9890,7 @@ bool VisualElement::loadCommon(const Common::String &name, uint32 guid, const Da
+@@ -9499,6 +10311,7 @@ bool VisualElement::loadCommon(const Common::String &name, uint32 guid, const Da
  	_name = name;
  	_guid = guid;
  	_visibleByDefault = ((elementFlags & Data::ElementFlags::kHidden) == 0);	// Element isn't actually flagged as visible until after Scene Changed, when Show commands are fired
@@ -4943,7 +5721,7 @@ index 0a9b567b..9cc4f91d 100644
  	_directToScreen = ((elementFlags & Data::ElementFlags::kNotDirectToScreen) == 0);
  	_streamLocator = streamLocator;
  	_sectionID = sectionID;
-@@ -9571,6 +9963,63 @@ MiniscriptInstructionOutcome VisualElement::scriptSetPositionY(MiniscriptThread
+@@ -9571,6 +10384,63 @@ MiniscriptInstructionOutcome VisualElement::scriptSetPositionY(MiniscriptThread
  	return kMiniscriptInstructionOutcomeContinue;
  }
  
@@ -5007,7 +5785,7 @@ index 0a9b567b..9cc4f91d 100644
  MiniscriptInstructionOutcome VisualElement::scriptSetCenterPosition(MiniscriptThread *thread, const DynamicValue &value) {
  	if (value.getType() == DynamicValueTypes::kPoint) {
  		const Common::Point destPoint = value.getPoint();
-@@ -9695,6 +10144,18 @@ MiniscriptInstructionOutcome VisualElement::scriptWriteRefPositionAttribute(Mini
+@@ -9695,6 +10565,18 @@ MiniscriptInstructionOutcome VisualElement::scriptWriteRefPositionAttribute(Mini
  	return kMiniscriptInstructionOutcomeFailed;
  }
  
@@ -5026,7 +5804,7 @@ index 0a9b567b..9cc4f91d 100644
  MiniscriptInstructionOutcome VisualElement::scriptWriteRefCenterPositionAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib) {
  	if (attrib == "x") {
  		DynamicValueWriteFuncHelper<VisualElement, &VisualElement::scriptSetCenterPositionX, true>::create(this, writeProxy);
-@@ -10104,12 +10565,45 @@ bool Modifier::readAttribute(MiniscriptThread *thread, DynamicValue &result, con
+@@ -10104,12 +10986,45 @@ bool Modifier::readAttribute(MiniscriptThread *thread, DynamicValue &result, con
  }
  
  MiniscriptInstructionOutcome Modifier::writeRefAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib) {
@@ -5076,7 +5854,7 @@ index 0a9b567b..9cc4f91d 100644
  	}
  
  	return RuntimeObject::writeRefAttribute(thread, writeProxy, attrib);
-@@ -10149,6 +10643,10 @@ bool Modifier::isKeyboardMessenger() const {
+@@ -10149,6 +11064,10 @@ bool Modifier::isKeyboardMessenger() const {
  	return false;
  }
  
@@ -5087,8 +5865,33 @@ index 0a9b567b..9cc4f91d 100644
  Common::SharedPtr<ModifierSaveLoad> Modifier::getSaveLoad(Runtime *runtime) {
  	return nullptr;
  }
+@@ -10341,7 +11260,7 @@ void VariableModifier::setStorage(const Common::SharedPtr<VariableStorage> &stor
+ }
+ 
+ bool VariableModifier::readAttribute(MiniscriptThread *thread, DynamicValue &result, const Common::String &attrib) {
+-	if (attrib == "value") {
++	if (attrib == "value" || attrib.empty()) {
+ 		varGetValue(result);
+ 		return true;
+ 	}
+@@ -10349,6 +11268,15 @@ bool VariableModifier::readAttribute(MiniscriptThread *thread, DynamicValue &res
+ 	return Modifier::readAttribute(thread, result, attrib);
+ }
+ 
++MiniscriptInstructionOutcome VariableModifier::writeRefAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib) {
++	if (attrib == "value" || attrib.empty()) {
++		writeProxy = createWriteProxy();
++		return kMiniscriptInstructionOutcomeContinue;
++	}
++
++	return Modifier::writeRefAttribute(thread, writeProxy, attrib);
++}
++
+ void VariableModifier::disable(Runtime *runtime) {
+ }
+ 
 diff --git a/engines/mtropolis/runtime.h b/engines/mtropolis/runtime.h
-index fef072a2..c96a3f17 100644
+index fef072a2..43b75764 100644
 --- a/engines/mtropolis/runtime.h
 +++ b/engines/mtropolis/runtime.h
 @@ -774,6 +774,7 @@ struct DynamicList {
@@ -5162,7 +5965,15 @@ index fef072a2..c96a3f17 100644
  	void removeAllChildren();
  	void removeAllModifiers();
  	void removeChild(Structural *child);
-@@ -2498,6 +2506,7 @@ public:
+@@ -2484,6 +2492,7 @@ public:
+ 	Common::SharedPtr<Modifier> resolveAlias(uint32 aliasID) const;
+ 	Common::SharedPtr<Modifier> findGlobalVarWithName(const Common::String &name) const;
+ 	void materializeGlobalVariables(Runtime *runtime, ObjectLinkingScope *scope);
++	const SimpleModifierContainer &getGlobalModifiers() const { return _globalModifiers; }
+ 
+ 	const ProjectPresentationSettings &getPresentationSettings() const;
+ 
+@@ -2498,6 +2507,7 @@ public:
  	void openSegmentStream(int segmentIndex);
  	void closeSegmentStream(int segmentIndex);
  	Common::SeekableReadStream *getStreamForSegment(int segmentIndex);
@@ -5170,7 +5981,7 @@ index fef072a2..c96a3f17 100644
  
  	const Common::String *findNameOfLabel(const Label &label) const;
  
-@@ -2516,6 +2525,7 @@ public:
+@@ -2516,6 +2526,7 @@ public:
  
  	RuntimeVersion getRuntimeVersion() const;
  	ProjectPlatform getPlatform() const;
@@ -5178,7 +5989,7 @@ index fef072a2..c96a3f17 100644
  
  	void visitInternalReferences(IStructuralReferenceVisitor *visitor) override;
  	Common::SharedPtr<Structural> shallowClone() const override;
-@@ -2636,6 +2646,7 @@ private:
+@@ -2636,6 +2647,7 @@ private:
  	SubtitleTables _subtitles;
  
  	ProjectPlatform _platform;
@@ -5186,7 +5997,7 @@ index fef072a2..c96a3f17 100644
  
  	Common::Archive *_rootArchive;
  	Common::Path _projectRootDir;
-@@ -2830,6 +2841,10 @@ public:
+@@ -2830,6 +2842,10 @@ public:
  
  	bool isVisual() const override;
  	virtual bool isTextLabel() const;
@@ -5197,7 +6008,7 @@ index fef072a2..c96a3f17 100644
  
  	struct VisualElementConsumeCommandCoroutine {
  		CORO_DEFINE_RETURN_TYPE(void);
-@@ -2843,6 +2858,7 @@ public:
+@@ -2843,6 +2859,7 @@ public:
  
  	bool isVisible() const;
  	bool isVisibleByDefault() const;
@@ -5205,7 +6016,7 @@ index fef072a2..c96a3f17 100644
  	void setVisible(Runtime *runtime, bool visible);
  
  	bool isDirectToScreen() const;
-@@ -2901,6 +2917,9 @@ public:
+@@ -2901,6 +2918,9 @@ public:
  	void setPalette(const Common::SharedPtr<Palette> &palette);
  	const Common::SharedPtr<Palette> &getPalette() const;
  
@@ -5215,7 +6026,7 @@ index fef072a2..c96a3f17 100644
  	void visitInternalReferences(IStructuralReferenceVisitor *visitor) override;
  
  	void pushVisibilityChangeTask(Runtime *runtime, bool desiredVisibility);
-@@ -2918,6 +2937,9 @@ protected:
+@@ -2918,6 +2938,9 @@ protected:
  	MiniscriptInstructionOutcome scriptSetPosition(MiniscriptThread *thread, const DynamicValue &dest);
  	MiniscriptInstructionOutcome scriptSetPositionX(MiniscriptThread *thread, const DynamicValue &dest);
  	MiniscriptInstructionOutcome scriptSetPositionY(MiniscriptThread *thread, const DynamicValue &dest);
@@ -5225,7 +6036,7 @@ index fef072a2..c96a3f17 100644
  	MiniscriptInstructionOutcome scriptSetCenterPosition(MiniscriptThread *thread, const DynamicValue &dest);
  	MiniscriptInstructionOutcome scriptSetCenterPositionX(MiniscriptThread *thread, const DynamicValue &dest);
  	MiniscriptInstructionOutcome scriptSetCenterPositionY(MiniscriptThread *thread, const DynamicValue &dest);
-@@ -2928,6 +2950,7 @@ protected:
+@@ -2928,6 +2951,7 @@ protected:
  	MiniscriptInstructionOutcome scriptSetLayer(MiniscriptThread *thread, const DynamicValue &dest);
  
  	MiniscriptInstructionOutcome scriptWriteRefPositionAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib);
@@ -5233,7 +6044,7 @@ index fef072a2..c96a3f17 100644
  	MiniscriptInstructionOutcome scriptWriteRefSizeAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib);
  	MiniscriptInstructionOutcome scriptWriteRefCenterPositionAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib);
  
-@@ -2967,6 +2990,7 @@ protected:
+@@ -2967,6 +2991,7 @@ protected:
  	bool _directToScreen;
  	bool _visible;
  	bool _visibleByDefault;
@@ -5241,7 +6052,7 @@ index fef072a2..c96a3f17 100644
  	Common::Rect _rect;
  	Common::Point _cachedAbsoluteOrigin;
  	uint16 _layer;
-@@ -2986,6 +3010,7 @@ protected:
+@@ -2986,6 +3011,7 @@ protected:
  	VisualElementTransitionProperties _transitionProps;
  
  	Common::SharedPtr<Palette> _palette;
@@ -5249,7 +6060,7 @@ index fef072a2..c96a3f17 100644
  
  	Common::Rect _prevRect;
  	bool _contentsDirty;
-@@ -3047,6 +3072,7 @@ public:
+@@ -3047,6 +3073,7 @@ public:
  	virtual bool isBehavior() const;
  	virtual bool isCompoundVariable() const;
  	virtual bool isKeyboardMessenger() const;
@@ -5257,13 +6068,21 @@ index fef072a2..c96a3f17 100644
  	virtual Common::SharedPtr<ModifierSaveLoad> getSaveLoad(Runtime *runtime);
  
  	bool isModifier() const override;
-@@ -3128,6 +3154,7 @@ public:
+@@ -3128,6 +3155,7 @@ public:
  
  	virtual bool isVariable() const override;
  	virtual bool isListVariable() const;
 +	virtual bool isObjectReferenceVariable() const { return false; }
  
  	virtual Common::SharedPtr<ModifierSaveLoad> getSaveLoad(Runtime *runtime) override final;
+ 
+@@ -3138,6 +3166,7 @@ public:
+ 	virtual void varGetValue(DynamicValue &dest) const = 0;
+ 
+ 	bool readAttribute(MiniscriptThread *thread, DynamicValue &result, const Common::String &attrib) override;
++	MiniscriptInstructionOutcome writeRefAttribute(MiniscriptThread *thread, DynamicValueWriteProxy &writeProxy, const Common::String &attrib) override;
+ 
+ 	void disable(Runtime *runtime) override;
  
 diff --git a/video/qt_decoder.cpp b/video/qt_decoder.cpp
 index b8fdbae5..3417daf0 100644
