@@ -238,7 +238,7 @@ index 54242641cc..b5fc9341a2 100644
  	Common::String _fontFamilyName;
  	uint _size;
 diff --git a/engines/mtropolis/runtime.cpp b/engines/mtropolis/runtime.cpp
-index a9fd85a86b..5b3021e2db 100644
+index a9fd85a86b..dca8c2ab35 100644
 --- a/engines/mtropolis/runtime.cpp
 +++ b/engines/mtropolis/runtime.cpp
 @@ -7260,10 +7260,45 @@ void Runtime::setVolume(double volume) {
@@ -296,6 +296,16 @@ index a9fd85a86b..5b3021e2db 100644
  		onMouseDown(320, 240, Actions::kMouseButtonLeft);
  		onMouseUp(320, 240, Actions::kMouseButtonLeft);
  		return;
+@@ -7535,7 +7572,8 @@ void Runtime::checkCollisions(ICollider *optRestrictToCollider) {
+ 		for (size_t oldIndex = 0; oldIndex < oldCollidingElements.size();) {
+ 			Common::SharedPtr<VisualElement> oldColElement = oldCollidingElements[oldIndex].lock();
+ 			if (oldColElement.get() == nullptr) {
+-				collidingElements.remove_at(oldIndex);
++				// The element is gone (e.g. a killed clone): drop it from the old list
++				oldCollidingElements.remove_at(oldIndex);
+ 				continue;
+ 			}
+ 
 diff --git a/engines/mtropolis/runtime.h b/engines/mtropolis/runtime.h
 index 43b7576408..67b0018a56 100644
 --- a/engines/mtropolis/runtime.h

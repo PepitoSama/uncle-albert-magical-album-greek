@@ -76,7 +76,8 @@ The script checks the installer, unpacks it with `innoextract`, verifies that `a
 2. Implements mTropolis text-label *calculated fields*: a label text such as `<nom_page>` or `<trad_texte>` shows the value of the variable with that name, filled in when the label activates and on the "Update Calculated Fields" command (event 219). Before this, page names, tooltips and the album-selection instructions showed the raw `<...>` placeholders.
 3. Lets Escape, the skip button or a click skip the French intro film. In the French release the `film` scene only leaves when the movie reaches its last frame, so the event is sent early.
 4. Ignores key auto-repeat when typing a name, so one key press adds one letter.
-5. Emscripten: creates folders listed in `Module.scummvmEnsureDirs` after mounting IDBFS, so the page can pass a per-edition `--savepath`.
+5. Fixes a crash in `Runtime::checkCollisions` (`Assertion failed: idx < _size ... remove_at`): an expired element was removed from the wrong list.
+6. Emscripten: creates folders listed in `Module.scummvmEnsureDirs` after mounting IDBFS, so the page can pass a per-edition `--savepath`.
 
 ---
 
